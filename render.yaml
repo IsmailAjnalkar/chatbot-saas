@@ -1,0 +1,30 @@
+# Render.com one-click deploy config for the chatbot SaaS.
+# Push this repo to GitHub, then: Render Dashboard -> New -> Blueprint -> select repo.
+services:
+  - type: web
+    name: chatbot-saas
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /api/health
+    # NOTE: free plan has no persistent disk, so the SQLite database is
+    # ephemeral (resets on restart/redeploy). Upgrade to a paid instance
+    # with a disk, or switch DB_PATH to Render Postgres, for persistence.
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: TRUST_PROXY
+        value: 1
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        generateValue: true
+      # Optional: enable the AI brain globally (or set per-client in Admin -> Settings)
+      # - key: LLM_ENABLED
+      #   value: 1
+      # - key: LLM_BASE_URL
+      #   value: https://api.openai.com/v1
+      # - key: LLM_MODEL
+      #   value: gpt-4o-mini
+      # - key: LLM_API_KEY
+      #   sync: false   # set manually in the Render dashboard (secret)

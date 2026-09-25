@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Glow &amp; Co. — Clean Skincare</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1f2937; }
+  header { background: #fff; border-bottom: 1px solid #eee; padding: 18px 32px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; }
+  .logo { font-size: 24px; font-weight: 800; color: #7c3aed; }
+  nav a { margin-left: 24px; text-decoration: none; color: #4b5563; font-weight: 500; }
+  .hero { background: linear-gradient(135deg, #ede9fe, #fce7f3); padding: 80px 32px; text-align: center; }
+  .hero h1 { font-size: 48px; margin-bottom: 16px; }
+  .hero p { font-size: 18px; color: #6b7280; max-width: 560px; margin: 0 auto 28px; }
+  .btn { background: #7c3aed; color: #fff; border: none; padding: 14px 32px; border-radius: 999px; font-size: 16px; cursor: pointer; }
+  .products { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 24px; padding: 56px 32px; max-width: 1100px; margin: 0 auto; }
+  .card { border: 1px solid #eee; border-radius: 16px; overflow: hidden; }
+  .card .img { height: 180px; background: linear-gradient(135deg, #ddd6fe, #fbcfe8); display: flex; align-items: center; justify-content: center; font-size: 56px; }
+  .card .info { padding: 18px; }
+  .card .info h3 { margin-bottom: 6px; }
+  .card .info .price { color: #7c3aed; font-weight: 700; font-size: 18px; }
+  .card .info p { color: #6b7280; font-size: 14px; margin: 8px 0 14px; }
+  .trust { background: #f9fafb; padding: 40px 32px; text-align: center; color: #6b7280; }
+  footer { padding: 32px; text-align: center; color: #9ca3af; font-size: 14px; }
+  #keybar { background: #1f2937; color: #e5e7eb; padding: 12px 32px; font-size: 14px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  #keybar input { background: #374151; border: 1px solid #4b5563; color: #fff; border-radius: 8px; padding: 8px 12px; width: 380px; max-width: 100%; font-family: monospace; }
+  #keybar button { background: #7c3aed; color: #fff; border: none; border-radius: 8px; padding: 8px 16px; cursor: pointer; }
+  #keybar .hint { color: #9ca3af; }
+</style>
+</head>
+<body>
+
+<div id="keybar">
+  <span>🔑 Demo setup — paste the widget API key from <code>npm run seed</code>:</span>
+  <input id="apikey" placeholder="cb_..." />
+  <button onclick="saveKey()">Load chatbot</button>
+  <span class="hint">The chat bubble appears bottom-right once loaded.</span>
+</div>
+
+<header>
+  <div class="logo">Glow &amp; Co.</div>
+  <nav><a href="#">Shop</a><a href="#">About</a><a href="#">Reviews</a><a href="#">Contact</a></nav>
+</header>
+
+<section class="hero">
+  <h1>Skincare that loves you back</h1>
+  <p>Clean, vegan, cruelty-free formulas. Free shipping on orders over $50. Try our chat assistant — it answers questions, tracks orders, and connects you with our team 24/7.</p>
+  <button class="btn">Shop bestsellers</button>
+</section>
+
+<section class="products">
+  <div class="card"><div class="img">🧴</div><div class="info"><h3>Hydra Silk Cream</h3><div class="price">$48</div><p>Deep hydration for dry skin. Fragrance-free.</p><button class="btn">Add to cart</button></div></div>
+  <div class="card"><div class="img">💧</div><div class="info"><h3>Featherweight Gel Moisturizer</h3><div class="price">$42</div><p>Oil-free moisture for oily &amp; combination skin.</p><button class="btn">Add to cart</button></div></div>
+  <div class="card"><div class="img">☁️</div><div class="info"><h3>Calm Cloud Barrier Cream</h3><div class="price">$52</div><p>Soothing barrier repair for sensitive skin.</p><button class="btn">Add to cart</button></div></div>
+  <div class="card"><div class="img">🍊</div><div class="info"><h3>Vitamin C Serum</h3><div class="price">$38</div><p>Brightening 15% vitamin C with hyaluronic acid.</p><button class="btn">Add to cart</button></div></div>
+</section>
+
+<section class="trust">
+  ⭐ 4.9 from 12,400 reviews &nbsp;•&nbsp; 🚚 Free shipping over $50 &nbsp;•&nbsp; ♻️ 100% vegan &amp; cruelty-free
+</section>
+
+<footer>© 2026 Glow &amp; Co. — demo storefront for the chatbot SaaS product.</footer>
+
+<script>
+  var API_URL = window.location.origin;
+  function saveKey() {
+    var k = document.getElementById('apikey').value.trim();
+    if (!k) return;
+    localStorage.setItem('cb_demo_key', k);
+    loadWidget(k);
+  }
+  function loadWidget(key) {
+    if (document.querySelector('script[data-widget]')) return;
+    var s = document.createElement('script');
+    s.src = API_URL + '/widget/widget.js';
+    s.setAttribute('data-api-key', key);
+    s.setAttribute('data-api-url', API_URL);
+    s.setAttribute('data-widget', '1');
+    document.body.appendChild(s);
+    document.getElementById('keybar').querySelector('.hint').textContent = 'Chatbot loaded — click the bubble bottom-right to try it.';
+  }
+  (function init() {
+    var k = localStorage.getItem('cb_demo_key');
+    if (k) { document.getElementById('apikey').value = k; loadWidget(k); }
+  })();
+</script>
+</body>
+</html>
