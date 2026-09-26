@@ -234,10 +234,22 @@
       if (!sessionId) return;
       fetch(API_URL + '/api/nudge?key=' + encodeURIComponent(API_KEY) + '&session_id=' + encodeURIComponent(sessionId))
         .then(function (res) { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
-        .then(function (j) { (j.nudges || []).forEach(showNudge); })
+        .then(function (j) {
+          (j.nudges || []).forEach(showNudge);
+          // Live-agent takeover: tell the visitor once that a human is now on the chat.
+          if (j.human_active && !humanAnnounced) {
+            humanAnnounced = true;
+            var bubble = addMsg('bot', '');
+            bubble.parentNode.classList.add('cbw-nudge');
+            bubble.insertBefore(el('div', 'cbw-team', 'Live agent'), bubble.firstChild);
+            bubble.appendChild(document.createTextNode(T.humanJoined || "You're now chatting with our team — an agent will reply here shortly."));
+            scrollDown();
+          }
+        })
         .catch(function () { /* silent — next poll retries */ });
     }
     setInterval(pollNudges, 20000);
+    var humanAnnounced = false;
 
     function scrollDown() { body.scrollTop = body.scrollHeight; }
 

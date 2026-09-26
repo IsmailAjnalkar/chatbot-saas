@@ -332,39 +332,75 @@ function loadLeads() {
   });
 }
 
-/* ---------- Conversations ---------- */
+/* ---------- Conversations (live-agent inbox) ---------- */
+var convsTimer = null;
 function loadConvs() {
   req('GET', '/api/admin/sessions?flagged=1').then(function (fr) {
     req('GET', '/api/admin/sessions').then(function (r) {
+      function statusPill(s) {
+        if (s.human_active) return '<span class="pill lead">agent live</span>';
+        if (s.flagged_human) return '<span class="pill fallback">needs human</span>';
+        if (s.resolved) return '<span class="pill llm">resolved</span>';
+        return '<span class="pill smalltalk">open</span>';
+      }
       function row(s) {
-        return '<tr><td style="font-family:monospace;font-size:12px">' + esc(s.id.slice(0, 14)) + '…</td>' +
+        var unread = s.unread_admin ? ' <span class="pill callback">new</span>' : '';
+        var idCell = s.unread_admin
+          ? '<td style="font-family:monospace;font-size:12px"><strong>' + esc(s.id.slice(0, 14)) + '…</strong></td>'
+          : '<td style="font-family:monospace;font-size:12px">' + esc(s.id.slice(0, 14)) + '…</td>';
+        return '<tr>' + idCell +
           '<td style="color:#6b7280;white-space:nowrap">' + timeAgo(s.created_at) + '</td>' +
           '<td>' + (s.channel && s.channel !== 'web' ? '<span class="pill order">' + esc(s.channel) + '</span> ' : '') +
-          (s.flagged_human ? '<span class="pill fallback">needs human</span>' : s.resolved ? '<span class="pill llm">resolved</span>' : '<span class="pill smalltalk">open</span>') + '</td>' +
-          '<td><div class="row-actions"><button class="small ghost" onclick="viewSession(\'' + s.id + '\')">View</button>' +
-          (s.flagged_human ? '<button class="small" onclick="resolveSession(\'' + s.id + '\')">Mark resolved</button>' : '') + '</div></td></tr>';
+          statusPill(s) + unread + '</td>' +
+          '<td><div class="row-actions"><button class="small ghost" onclick="viewSession(\'' + s.id + '\')">Open inbox</button>' +
+          (s.flagged_human && !s.human_active ? '<button class="small" onclick="takeoverSession(\'' + s.id + '\')">Take over</button>' : '') +
+          (s.human_active ? '<button class="small ghost" onclick="handbackSession(\'' + s.id + '\')">Hand back to bot</button>' : '') +
+          ((s.flagged_human || s.human_active) ? '<button class="small ghost" onclick="resolveSession(\'' + s.id + '\')">Resolve</button>' : '') +
+          '</div></td></tr>';
       }
       var flagged = fr.json.map(row).join('');
+      var live = r.json.filter(function (s) { return s.human_active && !s.flagged_human; }).map(row).join('');
       var all = r.json.map(row).join('');
+      // Tab badge: needs-human count in the document title.
+      var needCount = fr.json.filter(function (s) { return !s.human_active; }).length;
+      document.title = (needCount ? '(' + needCount + ') ' : '') + 'Chatbot Admin';
       document.getElementById('tab-convs').innerHTML =
         '<div class="panel"><h3>⚑ Needs human follow-up (' + fr.json.length + ')</h3><table><tr><th>Session</th><th>Started</th><th>Status</th><th></th></tr>' + (flagged || '<tr><td colspan="4" style="color:#6b7280">Nothing flagged. Visitors who ask for a human appear here.</td></tr>') + '</table></div>' +
+        (live ? '<div class="panel"><h3>🟢 Agent live (' + r.json.filter(function (s) { return s.human_active && !s.flagged_human; }).length + ')</h3><table><tr><th>Session</th><th>Started</th><th>Status</th><th></th></tr>' + live + '</table></div>' : '') +
         '<div class="panel"><h3>All conversations (' + r.json.length + ')</h3><table><tr><th>Session</th><th>Started</th><th>Status</th><th></th></tr>' + (all || '<tr><td colspan="4" style="color:#6b7280">No conversations yet.</td></tr>') + '</table></div>';
+      // Auto-refresh the inbox every 15s while this tab is visible and no modal is open.
+      if (convsTimer) clearInterval(convsTimer);
+      convsTimer = setInterval(function () {
+        var tabActive = document.getElementById('tab-convs').classList.contains('active');
+        var modalOpen = document.getElementById('modal').classList.contains('open');
+        if (tabActive && !modalOpen) loadConvs();
+      }, 15000);
     });
   });
 }
 function viewSession(id) {
   req('GET', '/api/admin/sessions/' + id).then(function (r) {
+    var s = r.json.session;
     var msgs = r.json.messages.map(function (m) {
       var meta = {};
       try { meta = JSON.parse(m.meta || '{}'); } catch (e) {}
       var cls = m.role === 'user' ? 'u' : 'a';
       var tag = m.role === 'assistant' && meta.type ? ' <span class="pill ' + esc(meta.type) + '">' + esc(meta.type) + (meta.confidence ? ' ' + meta.confidence : '') + '</span>' : '';
+      if (meta.type === 'admin_reply') tag = ' <span class="pill lead">agent</span>';
       return '<div class="' + cls + '"><span>' + esc(m.text) + '</span>' + tag + '</div>';
     }).join('');
-    var chBadge = r.json.session.channel && r.json.session.channel !== 'web' ? ' <span class="pill order">' + esc(r.json.session.channel) + '</span>' : '';
-    openModal('<h3>Conversation' + chBadge + '</h3><div class="transcript">' + msgs + '</div>' +
+    var chBadge = s.channel && s.channel !== 'web' ? ' <span class="pill order">' + esc(s.channel) + '</span>' : '';
+    var handoff = s.handoff_summary
+      ? '<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px;white-space:pre-wrap"><strong>📋 Handoff context</strong><br>' + esc(s.handoff_summary) + '</div>'
+      : '';
+    var stateBtns = s.human_active
+      ? '<button class="ghost" onclick="handbackSession(\'' + id + '\',true)">Hand back to bot</button>'
+      : '<button onclick="takeoverSession(\'' + id + '\',true)">Take over</button>';
+    openModal('<h3>Conversation' + chBadge + (s.human_active ? ' <span class="pill lead">agent live</span>' : '') + '</h3>' + handoff +
+      '<div class="transcript">' + msgs + '</div>' +
       '<label class="lbl" style="margin-top:12px">Reply as the team</label><textarea id="reply-text" rows="2" maxlength="2000" placeholder="Type a reply… (sends via WhatsApp/Messenger when connected, otherwise as a widget nudge)"></textarea>' +
-      '<div class="row-actions" style="margin-top:8px"><button onclick="sendReply(\'' + id + '\')">Send reply</button><button class="ghost" onclick="closeModal()">Close</button></div>');
+      '<div class="row-actions" style="margin-top:8px"><button onclick="sendReply(\'' + id + '\')">Send reply</button>' + stateBtns +
+      '<button class="ghost" onclick="resolveSession(\'' + id + '\',true)">Resolve</button><button class="ghost" onclick="closeModal()">Close</button></div>');
   });
 }
 function sendReply(id) {
@@ -374,10 +410,23 @@ function sendReply(id) {
     if (r.status >= 400) { alert(r.json.error || 'Failed to send'); return; }
     closeModal();
     viewSession(id);
+    loadConvs();
   });
 }
-function resolveSession(id) {
-  req('POST', '/api/admin/sessions/' + id + '/resolve').then(loadConvs);
+function takeoverSession(id, fromModal) {
+  req('POST', '/api/admin/sessions/' + id + '/takeover').then(function () {
+    if (fromModal) { viewSession(id); } loadConvs();
+  });
+}
+function handbackSession(id, fromModal) {
+  req('POST', '/api/admin/sessions/' + id + '/handback').then(function () {
+    if (fromModal) { viewSession(id); } loadConvs();
+  });
+}
+function resolveSession(id, fromModal) {
+  req('POST', '/api/admin/sessions/' + id + '/resolve').then(function () {
+    if (fromModal) closeModal(); loadConvs();
+  });
 }
 
 /* ---------- Orders ---------- */

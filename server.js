@@ -705,7 +705,7 @@ app.get('/api/nudge', nudgeLimiter, async (req, res) => {
   if (!business) return res.status(401).json({ error: 'invalid api key' });
   const s = await db.getSession(req.query.session_id || '');
   if (!s || s.business_id !== business.id) return res.status(404).json({ error: 'session not found' });
-  res.json({ nudges: await db.getPendingNudges(business.id, s.id) });
+  res.json({ nudges: await db.getPendingNudges(business.id, s.id), human_active: !!s.human_active });
 });
 
 // ---------- auth ----------
@@ -941,12 +941,31 @@ admin.get('/sessions', async (req, res) => {
 admin.get('/sessions/:id', async (req, res) => {
   const s = await db.getSession(req.params.id);
   if (!s || s.business_id !== req.businessId) return res.status(404).json({ error: 'not found' });
+  if (s.unread_admin) await db.updateSession(req.params.id, { unread_admin: 0 }); // agent has seen it
   res.json({ session: s, messages: await db.getHistory(req.params.id, 200) });
 });
 admin.post('/sessions/:id/resolve', async (req, res) => {
   const s = await db.getSession(req.params.id);
   if (!s || s.business_id !== req.businessId) return res.status(404).json({ error: 'not found' });
-  await db.updateSession(req.params.id, { flagged_human: 0, resolved: 1 });
+  await db.updateSession(req.params.id, { flagged_human: 0, resolved: 1, human_active: 0, unread_admin: 0 });
+  res.json({ ok: true });
+});
+// Live-agent takeover: the bot goes silent on this conversation until the
+// agent hands it back (or resolves it). The visitor's side is notified via
+// the widget nudge poll / next agent reply.
+admin.post('/sessions/:id/takeover', async (req, res) => {
+  const s = await db.getSession(req.params.id);
+  if (!s || s.business_id !== req.businessId) return res.status(404).json({ error: 'not found' });
+  await db.updateSession(req.params.id, { human_active: 1, unread_admin: 0 });
+  await db.logAction(req.businessId, { session_id: req.params.id, action: 'agent_takeover', status: 'completed' });
+  res.json({ ok: true });
+});
+// Hand the conversation back to the bot.
+admin.post('/sessions/:id/handback', async (req, res) => {
+  const s = await db.getSession(req.params.id);
+  if (!s || s.business_id !== req.businessId) return res.status(404).json({ error: 'not found' });
+  await db.updateSession(req.params.id, { human_active: 0 });
+  await db.logAction(req.businessId, { session_id: req.params.id, action: 'agent_handback', status: 'completed' });
   res.json({ ok: true });
 });
 // Admin reply to a conversation: sends via the channel provider when
@@ -973,6 +992,9 @@ admin.post('/sessions/:id/reply', async (req, res) => {
     console.error('[admin] session reply send failed:', err.message);
   }
   await db.addMessage(s.id, 'assistant', text, { type: 'admin_reply' });
+  // Replying from the inbox takes the conversation over: the bot stays
+  // silent until the agent hands it back or resolves it.
+  await db.updateSession(s.id, { human_active: 1, unread_admin: 0 });
   res.json({ ok: true, delivered_via });
 });
 
