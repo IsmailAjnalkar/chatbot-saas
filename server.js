@@ -23,6 +23,7 @@ const llm = require('./lib/llm');
 const { createLimiter } = require('./lib/ratelimit');
 const { encryptSecret, encryptionEnabled } = require('./lib/crypto');
 const crawl = require('./lib/crawl');
+const webhooks = require('./lib/webhooks');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -1012,6 +1013,50 @@ admin.delete('/orders/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- Lightweight ticketing ----------
+admin.get('/tickets', async (req, res) =>
+  res.json(await db.listTickets(req.businessId, { status: String(req.query.status || '') })));
+admin.get('/tickets/open-count', async (req, res) =>
+  res.json({ open: await db.countOpenTickets(req.businessId) }));
+admin.post('/tickets', async (req, res) => {
+  const { session_id, subject, priority } = req.body || {};
+  if (!subject || !String(subject).trim()) return res.status(400).json({ error: 'subject is required' });
+  if (session_id) {
+    const s = await db.getSession(session_id);
+    if (!s || s.business_id !== req.businessId) return res.status(400).json({ error: 'unknown session' });
+  }
+  const ticket = await db.createTicket(req.businessId, { session_id: session_id || null, subject, priority });
+  webhooks.emit(req.businessId, 'ticket.created', { ticket }).catch(() => {});
+  res.status(201).json(ticket);
+});
+admin.put('/tickets/:id', async (req, res) => {
+  const ticket = await db.updateTicket(req.params.id, req.businessId, req.body || {});
+  if (!ticket) return res.status(404).json({ error: 'not found' });
+  webhooks.emit(req.businessId, 'ticket.updated', { ticket }).catch(() => {});
+  res.json(ticket);
+});
+
+// ---------- Outgoing webhook endpoints (Zapier/Make/custom) ----------
+admin.get('/webhooks/events', async (req, res) => res.json(webhooks.WEBHOOK_EVENTS));
+admin.get('/webhooks', async (req, res) => res.json(await db.listWebhookEndpoints(req.businessId)));
+admin.post('/webhooks', async (req, res) => {
+  const { url, events } = req.body || {};
+  try {
+    const ep = await db.addWebhookEndpoint(req.businessId, { url, events: Array.isArray(events) ? events : [] });
+    res.status(201).json(ep); // includes the HMAC signing secret ONCE — store it now
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+admin.delete('/webhooks/:id', async (req, res) => {
+  await db.deleteWebhookEndpoint(req.params.id, req.businessId);
+  res.json({ ok: true });
+});
+admin.post('/webhooks/:id/toggle', async (req, res) => {
+  await db.setWebhookEndpointActive(req.params.id, req.businessId, !!(req.body && req.body.active));
+  res.json({ ok: true });
+});
+
 // Analytics
 // Account: plan + trial status for the admin banner / upgrade CTA.
 admin.get('/account', async (req, res) => {
@@ -1110,6 +1155,90 @@ admin.post('/change-password', async (req, res) => {
   await db.updateAdminPassword(adminRow.id, new_password);
   res.json({ ok: true });
 });
+
+// ---------- Public API v1 (Zapier / Make / custom integrations) ----------
+// Auth: Authorization: Bearer <business api_key>  (the same key the website
+// widget uses; find it in Admin -> Settings). ?api_key= also works.
+// Rate-limited like the rest of the API.
+async function requireApiKey(req, res, next) {
+  const header = String(req.get('authorization') || '');
+  const key = header.toLowerCase().startsWith('bearer ')
+    ? header.slice(7).trim()
+    : String(req.query.api_key || '').trim();
+  if (!key) return res.status(401).json({ error: 'missing API key — send Authorization: Bearer <key>' });
+  const business = await db.getBusinessByKey(key);
+  if (!business) return res.status(401).json({ error: 'invalid API key' });
+  req.apiBusiness = business;
+  next();
+}
+const v1 = express.Router();
+v1.use(requireApiKey);
+
+v1.get('/conversations', async (req, res) => {
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 200);
+  const sessions = await db.listSessions(req.apiBusiness.id, { limit });
+  res.json(sessions.map((s) => ({
+    id: s.id, visitor_label: s.visitor_label, channel: s.channel,
+    flagged_human: !!s.flagged_human, human_active: !!s.human_active,
+    resolved: !!s.resolved, created_at: s.created_at,
+  })));
+});
+v1.get('/conversations/:id', async (req, res) => {
+  const s = await db.getSession(req.params.id);
+  if (!s || s.business_id !== req.apiBusiness.id) return res.status(404).json({ error: 'not found' });
+  res.json(s);
+});
+v1.get('/conversations/:id/messages', async (req, res) => {
+  const s = await db.getSession(req.params.id);
+  if (!s || s.business_id !== req.apiBusiness.id) return res.status(404).json({ error: 'not found' });
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 200);
+  res.json(await db.getHistory(req.params.id, limit));
+});
+// Send an agent message into a conversation (delivers via WhatsApp/Messenger
+// when the session is on that channel, otherwise queues a widget nudge).
+v1.post('/conversations/:id/messages', async (req, res) => {
+  const s = await db.getSession(req.params.id);
+  if (!s || s.business_id !== req.apiBusiness.id) return res.status(404).json({ error: 'not found' });
+  const text = String((req.body && req.body.text) || '').trim();
+  if (!text) return res.status(400).json({ error: 'text is required' });
+  if (text.length > 2000) return res.status(400).json({ error: 'text must be 2000 characters or less' });
+  const business = req.apiBusiness;
+  let delivered_via = 'transcript';
+  try {
+    if (s.channel === 'whatsapp' && channels.whatsappConfigured()) {
+      delivered_via = await channels.sendWhatsAppText(business, s.channel_sender, text) ? 'whatsapp' : 'transcript';
+    } else if (s.channel === 'messenger' && channels.messengerConfigured()) {
+      delivered_via = await channels.sendMessengerText(business, s.channel_sender, text) ? 'messenger' : 'transcript';
+    } else {
+      await db.addNudge(business.id, s.id, text);
+      delivered_via = 'nudge';
+    }
+  } catch (err) {
+    console.error('[v1] message send failed:', err.message);
+  }
+  const messageId = await db.addMessage(s.id, 'assistant', text, { type: 'api_reply' });
+  await db.updateSession(s.id, { human_active: 1, unread_admin: 0 });
+  webhooks.emit(business.id, 'message.sent', { session_id: s.id, text: text.slice(0, 500) }).catch(() => {});
+  res.status(201).json({ ok: true, message_id: messageId, delivered_via });
+});
+
+v1.get('/tickets', async (req, res) =>
+  res.json(await db.listTickets(req.apiBusiness.id, { status: String(req.query.status || '') })));
+v1.post('/tickets', async (req, res) => {
+  const { session_id, subject, priority } = req.body || {};
+  if (!subject || !String(subject).trim()) return res.status(400).json({ error: 'subject is required' });
+  const ticket = await db.createTicket(req.apiBusiness.id, { session_id: session_id || null, subject, priority });
+  webhooks.emit(req.apiBusiness.id, 'ticket.created', { ticket }).catch(() => {});
+  res.status(201).json(ticket);
+});
+v1.patch('/tickets/:id', async (req, res) => {
+  const ticket = await db.updateTicket(req.params.id, req.apiBusiness.id, req.body || {});
+  if (!ticket) return res.status(404).json({ error: 'not found' });
+  webhooks.emit(req.apiBusiness.id, 'ticket.updated', { ticket }).catch(() => {});
+  res.json(ticket);
+});
+
+app.use('/api/v1', v1);
 
 app.use('/api/admin', admin);
 
