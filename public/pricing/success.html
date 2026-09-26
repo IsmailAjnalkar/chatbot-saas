@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Welcome aboard — your chatbot is ready</title>
+<link rel="stylesheet" href="pricing.css">
+<style>
+  .creds { background: #f8fafc; border: 1px dashed #9ca3af; border-radius: 12px; padding: 24px; margin: 20px 0; }
+  .cred { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #e5e7eb; }
+  .cred:last-child { border-bottom: none; }
+  .cred .k { color: #6b7280; font-size: 13px; }
+  .cred .v { font-family: ui-monospace, Menlo, monospace; font-size: 14px; word-break: break-all; }
+  .cred button { padding: 6px 12px; font-size: 13px; white-space: nowrap; }
+  .warn { background: #fef3c7; border: 1px solid #f59e0b; color: #92400e; border-radius: 8px; padding: 12px 16px; font-size: 14px; margin-bottom: 18px; }
+  .next { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px; }
+  .next .btn.ghost { background: #e5e7eb; color: #374151; }
+</style>
+</head>
+<body>
+<main class="wrap" style="max-width:760px">
+  <section class="hero" style="padding:40px 0 20px">
+    <h1 id="title">🎉 Your chatbot is ready</h1>
+    <p class="muted" id="subtitle">Loading your credentials…</p>
+  </section>
+  <section class="panel" id="panel" style="display:none">
+    <div class="warn"><strong>Shown once — copy these now.</strong> These credentials are deleted from our system the moment this page loads. Store them somewhere safe.</div>
+    <div class="creds">
+      <div class="cred"><span class="k">Business</span><span class="v" id="c-business"></span></div>
+      <div class="cred"><span class="k">Admin username</span><span class="v" id="c-user"></span><button onclick="copyCred('c-user', this)">Copy</button></div>
+      <div class="cred"><span class="k">Admin password</span><span class="v" id="c-pass"></span><button onclick="copyCred('c-pass', this)">Copy</button></div>
+      <div class="cred"><span class="k">Widget API key</span><span class="v" id="c-key"></span><button onclick="copyCred('c-key', this)">Copy</button></div>
+    </div>
+    <div class="next">
+      <a class="btn" id="admin-link" href="/admin/">Open admin dashboard →</a>
+      <a class="btn ghost" id="demo-link" href="/demo/">See the live demo</a>
+    </div>
+    <p class="muted small" style="margin-top:16px">Next: sign in with the admin credentials, change the password (Settings tab), and paste the embed snippet from the admin dashboard into your website.</p>
+  </section>
+  <section class="panel" id="error-panel" style="display:none">
+    <p class="err" id="error-text">Could not load credentials.</p>
+    <p class="muted">If you just completed payment, your business was provisioned — check your email or contact support to recover your login.</p>
+  </section>
+</main>
+<script>
+function copyCred(id, btn) {
+  var t = document.getElementById(id).textContent;
+  function done() { var o = btn.textContent; btn.textContent = 'Copied ✓'; setTimeout(function () { btn.textContent = o; }, 1500); }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(t).then(done).catch(function () { fallback(); });
+  } else { fallback(); }
+  function fallback() {
+    var ta = document.createElement('textarea');
+    ta.value = t; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta); done();
+  }
+}
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  var sid = params.get('session_id');
+  if (!sid) { showError('Missing session_id.'); return; }
+  fetch('/api/billing/success?session_id=' + encodeURIComponent(sid))
+    .then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function (c) {
+      document.getElementById('c-business').textContent = c.business_name || '—';
+      document.getElementById('c-user').textContent = c.admin_username || '—';
+      document.getElementById('c-pass').textContent = c.admin_password || '—';
+      document.getElementById('c-key').textContent = c.api_key || '—';
+      document.getElementById('admin-link').href = c.admin_url || '/admin/';
+      document.getElementById('subtitle').textContent = 'Payment complete — here is everything you need to get started.';
+      document.getElementById('panel').style.display = 'block';
+    })
+    .catch(function () { showError('These credentials were already shown (or never existed). They are displayed exactly once for security.'); });
+  function showError(msg) {
+    document.getElementById('error-text').textContent = msg;
+    document.getElementById('error-panel').style.display = 'block';
+    document.getElementById('subtitle').textContent = 'Something went wrong.';
+  }
+})();
+</script>
+</body>
+</html>

@@ -28,3 +28,15 @@ services:
       #   value: gpt-4o-mini
       # - key: LLM_API_KEY
       #   sync: false   # set manually in the Render dashboard (secret)
+      # Optional: Stripe self-serve billing (pricing page + auto-provisioning).
+      # Create the recurring monthly prices in the Stripe Dashboard first.
+      # - key: STRIPE_SECRET_KEY
+      #   sync: false   # set manually in the Render dashboard (secret)
+      # - key: STRIPE_PRICE_STARTER
+      #   value: price_...
+      # - key: STRIPE_PRICE_GROWTH
+      #   value: price_...
+      # - key: STRIPE_PRICE_SCALE
+      #   value: price_...
+      # - key: STRIPE_WEBHOOK_SECRET
+      #   sync: false   # set manually in the Render dashboard (secret)

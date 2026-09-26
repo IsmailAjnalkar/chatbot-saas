@@ -75,6 +75,7 @@
     <button data-tab="leads" onclick="showTab('leads')">Leads</button>
     <button data-tab="convs" onclick="showTab('convs')">Conversations</button>
     <button data-tab="orders" onclick="showTab('orders')">Orders</button>
+    <button data-tab="nudges" onclick="showTab('nudges')">Nudges</button>
     <button data-tab="settings" onclick="showTab('settings')">Settings</button>
   </nav>
   <main>
@@ -83,6 +84,7 @@
     <div class="tab" id="tab-leads"></div>
     <div class="tab" id="tab-convs"></div>
     <div class="tab" id="tab-orders"></div>
+    <div class="tab" id="tab-nudges"></div>
     <div class="tab" id="tab-settings"></div>
   </main>
 </div>
@@ -128,7 +130,7 @@ function showTab(name) {
   document.querySelectorAll('nav.tabs button').forEach(function (b) { b.classList.toggle('active', b.dataset.tab === name); });
   document.querySelectorAll('.tab').forEach(function (t) { t.classList.remove('active'); });
   document.getElementById('tab-' + name).classList.add('active');
-  ({ overview: loadOverview, faqs: loadFaqs, leads: loadLeads, convs: loadConvs, orders: loadOrders, settings: loadSettings })[name]();
+  ({ overview: loadOverview, faqs: loadFaqs, leads: loadLeads, convs: loadConvs, orders: loadOrders, nudges: loadNudges, settings: loadSettings })[name]();
 }
 
 /* ---------- Overview ---------- */
@@ -142,14 +144,31 @@ function loadOverview() {
     var unans = a.top_unanswered.length ? a.top_unanswered.map(function (u) {
       return '<tr><td>' + esc(u.question) + '</td><td>' + u.times + '×</td><td style="color:#6b7280">' + timeAgo(u.last_seen) + '</td></tr>';
     }).join('') : '<tr><td colspan="3" style="color:#6b7280">No unanswered questions — nice!</td></tr>';
+    // --- CSAT (thumbs up/down on bot replies) ---
+    var csat = a.csat || { positive: 0, negative: 0, percent: null, per_day: [] };
+    var csatCard = csat.percent == null ? '—' : csat.percent + '%';
+    var maxVotes = Math.max.apply(null, [1].concat(csat.per_day.map(function (d) { return d.positive + d.negative; })));
+    var csatBars = csat.per_day.length ? csat.per_day.map(function (d) {
+      var tot = d.positive + d.negative;
+      var ph = Math.round(d.positive / maxVotes * 120), nh = Math.round(d.negative / maxVotes * 120);
+      return '<div style="flex:1;text-align:center"><div style="display:flex;flex-direction:column;justify-content:flex-end;height:120px;align-items:center"><div style="width:60%;height:' + ph + 'px;background:#10b981;border-radius:4px 4px 0 0"></div><div style="width:60%;height:' + nh + 'px;background:#ef4444;border-radius:0 0 4px 4px"></div></div><div style="font-size:11px;color:#6b7280;margin-top:4px">' + esc(d.day.slice(5)) + '<br><strong>' + tot + '</strong></div></div>';
+    }).join('') : '<p style="color:#6b7280;font-size:14px">No votes yet — visitors can rate each bot reply with 👍 / 👎.</p>';
+    // --- Resolution funnel ---
+    var f = a.funnel || { answered: 0, escalated: 0, leads: 0 };
     document.getElementById('tab-overview').innerHTML =
       '<div class="cards">' +
       '<div class="stat"><div class="n">' + a.resolution.total + '</div><div class="l">Chats (30 days)</div></div>' +
       '<div class="stat"><div class="n">' + a.resolution.resolution_rate + '%</div><div class="l">Est. resolution rate</div></div>' +
       '<div class="stat"><div class="n">' + a.leads_30d + '</div><div class="l">Leads captured (30 days)</div></div>' +
-      '<div class="stat"><div class="n">' + a.top_unanswered.length + '</div><div class="l">Distinct unanswered topics</div></div>' +
+      '<div class="stat"><div class="n">' + csatCard + '</div><div class="l">CSAT — thumbs positive (14 days)<br><span style="font-size:12px">👍 ' + csat.positive + ' · 👎 ' + csat.negative + '</span></div></div>' +
       '</div>' +
       '<div class="panel"><h3>Chats per day (14 days)</h3><div style="display:flex;gap:6px;align-items:flex-end">' + bars + '</div></div>' +
+      '<div class="panel"><h3>Resolution funnel (30 days)</h3><p style="color:#6b7280;font-size:13px;margin-bottom:12px">What happened to each session: answered directly by the bot, escalated to a human, or turned into a captured lead.</p>' +
+      '<table><tr><th>Stage</th><th>Sessions</th></tr>' +
+      '<tr><td>✅ Answered by the bot</td><td><strong>' + f.answered + '</strong></td></tr>' +
+      '<tr><td>🙋 Escalated to a human</td><td><strong>' + f.escalated + '</strong></td></tr>' +
+      '<tr><td>📥 Leads captured</td><td><strong>' + f.leads + '</strong></td></tr></table></div>' +
+      '<div class="panel"><h3>CSAT trend (14 days)</h3><p style="color:#6b7280;font-size:13px;margin-bottom:12px">Thumbs ratings on bot replies — green = helpful, red = not helpful.</p><div style="display:flex;gap:6px;align-items:flex-end">' + csatBars + '</div></div>' +
       '<div class="panel"><h3>Top unanswered questions</h3><p style="color:#6b7280;font-size:13px;margin-bottom:12px">Questions the bot couldn\'t answer — add these to the Knowledge Base to improve it.</p><table><tr><th>Question</th><th>Times asked</th><th>Last seen</th></tr>' + unans + '</table></div>';
   });
 }
@@ -333,6 +352,45 @@ function saveOrder() {
 }
 function delOrder(id) { if (confirm('Delete this order?')) req('DELETE', '/api/admin/orders/' + id).then(loadOrders); }
 
+/* ---------- Nudges (proactive messaging) ---------- */
+function loadNudges() {
+  req('GET', '/api/admin/sessions').then(function (r) {
+    var sessions = r.json || [];
+    var opts = '<option value="active">All active sessions (messaged in the last 15 min)</option>' +
+      sessions.map(function (s) {
+        return '<option value="' + esc(s.id) + '">' + esc(s.id.slice(0, 14)) + '… · ' + timeAgo(s.created_at) + '</option>';
+      }).join('');
+    req('GET', '/api/admin/nudges').then(function (nr) {
+      var rows = (nr.json || []).map(function (n) {
+        return '<tr><td>' + esc(n.text) + '</td>' +
+          '<td style="font-family:monospace;font-size:12px">' + esc(n.session_id.slice(0, 14)) + '…</td>' +
+          '<td>' + (n.shown ? '<span class="pill llm">shown</span>' : '<span class="pill order">pending</span>') + '</td>' +
+          '<td style="color:#6b7280;white-space:nowrap">' + timeAgo(n.created_at) + '</td></tr>';
+      }).join('');
+      document.getElementById('tab-nudges').innerHTML =
+        '<div class="panel"><h3>Send a proactive message</h3>' +
+        '<p style="color:#6b7280;font-size:13px;margin-bottom:12px">Message visitors who chatted in the last 15 minutes, or pick one conversation. The nudge appears in their widget as a note from your team.</p>' +
+        '<label class="lbl">Message (max 500 chars)</label><textarea id="nudge-text" rows="3" maxlength="500" placeholder="Hi! Need any help finding something today?"></textarea>' +
+        '<label class="lbl">Target</label><select id="nudge-target">' + opts + '</select>' +
+        '<button onclick="sendNudge()">Send nudge</button> <span class="ok" id="nudge-ok" style="display:none"></span></div>' +
+        '<div class="panel"><h3>Recent nudges</h3><table><tr><th>Message</th><th>Session</th><th>Status</th><th>Sent</th></tr>' +
+        (rows || '<tr><td colspan="4" style="color:#6b7280">No nudges yet.</td></tr>') + '</table></div>';
+    });
+  });
+}
+function sendNudge() {
+  var text = document.getElementById('nudge-text').value.trim();
+  var target = document.getElementById('nudge-target').value;
+  if (!text) { alert('Enter a message first.'); return; }
+  req('POST', '/api/admin/nudges', { text: text, target: target }).then(function (r) {
+    if (r.status >= 400) { alert(r.json.error || 'Failed to send'); return; }
+    var ok = document.getElementById('nudge-ok');
+    ok.style.display = 'inline';
+    ok.textContent = 'Sent to ' + r.json.sent + ' session' + (r.json.sent === 1 ? '' : 's') + ' ✓';
+    loadNudges();
+  });
+}
+
 /* ---------- Settings ---------- */
 function loadSettings() {
   req('GET', '/api/admin/settings').then(function (r) {
@@ -350,6 +408,7 @@ function loadSettings() {
         return '<option value="' + l[0] + '"' + ((s.default_language || 'en') === l[0] ? ' selected' : '') + '>' + l[1] + '</option>';
       }).join('') + '</select></div></div>' +
       '<div class="check"><input type="checkbox" id="s-auto_translate" ' + (s.auto_translate ? 'checked' : '') + '> Auto-translate replies to the visitor\'s language (needs LLM)</div>' +
+      '<div class="check"><input type="checkbox" id="s-voice_enabled" ' + (s.voice_enabled !== false ? 'checked' : '') + '> Enable voice input/output in the widget (mic button + read-aloud toggle)</div>' +
       '<label class="lbl">Allowed origins (widget security)</label><textarea id="s-allowed_origins" rows="2" placeholder="https://shop.example.com, https://www.example.com">' + esc(s.allowed_origins || '') + '</textarea>' +
       '<p style="color:#9ca3af;font-size:12px;margin-bottom:12px">Domains allowed to load the widget (comma or line separated). Supports <code>https://*.example.com</code>. Leave empty only for development.</p>' +
       '<button onclick="saveSettings()">Save settings</button> <span class="ok" id="s-ok" style="display:none">Saved ✓</span></div>' +
@@ -365,6 +424,9 @@ function loadSettings() {
       '<p style="color:#6b7280;font-size:13px;margin-bottom:12px">Your store sends this as the <code>X-Webhook-Secret</code> header to <code>POST /api/webhook/orders</code>. Status: <strong>' + (s.webhook_secret_set ? 'set' : 'not set') + '</strong>. The secret is shown once and never again — regenerate if it leaks.</p>' +
       '<button onclick="regenWebhook()">Regenerate secret</button>' +
       '<textarea id="wh-out" rows="2" readonly style="display:none;margin-top:10px" onclick="this.select()"></textarea></div>' +
+      '<div class="panel"><h3>Billing</h3>' +
+      '<p style="color:#6b7280;font-size:13px;margin-bottom:12px">Manage your subscription (plan, invoices, payment method) in the Stripe customer portal. Businesses created through the pricing page have one automatically.</p>' +
+      '<button onclick="openPortal()">Open billing portal</button> <span class="err" id="bill-err" style="display:none;margin-bottom:0"></span></div>' +
       '<div class="panel"><h3>Change password</h3>' +
       '<label class="lbl">Current password</label><input id="p-cur" type="password">' +
       '<label class="lbl">New password (min 8 chars)</label><input id="p-new" type="password">' +
@@ -384,7 +446,7 @@ function saveSettings() {
     brand_color: v('s-brand_color'), support_email: v('s-support_email'),
     lead_capture_enabled: v('s-lead_capture_enabled'), allowed_origins: v('s-allowed_origins'),
     default_language: v('s-default_language'), auto_translate: v('s-auto_translate'),
-    llm_enabled: v('s-llm_enabled'), llm_base_url: v('s-llm_base_url'), llm_model: v('s-llm_model'),
+    voice_enabled: v('s-voice_enabled'), llm_enabled: v('s-llm_enabled'), llm_base_url: v('s-llm_base_url'), llm_model: v('s-llm_model'),
   };
   var k = v('s-llm_api_key');
   if (k) body.llm_api_key = k;
@@ -402,6 +464,17 @@ function regenWebhook() {
     out.style.display = 'block';
     out.value = r.json.webhook_secret + '\n\n(shown once — copy it now: ' + r.json.warning + ')';
     out.select();
+  });
+}
+function openPortal() {
+  req('POST', '/api/admin/billing/portal', {}).then(function (r) {
+    if (r.status >= 400) {
+      var e = document.getElementById('bill-err');
+      e.style.display = 'inline';
+      e.textContent = r.json.error || 'Could not open the billing portal';
+      return;
+    }
+    window.location.href = r.json.url;
   });
 }
 function changePw() {

@@ -75,6 +75,19 @@ LLM_API_KEY=sk-...
 
 Any OpenAI-compatible `/chat/completions` endpoint works (OpenAI, Azure, Ollama, vLLM, OpenRouter, Together…). The LLM only ever answers **from the client's knowledge base** — it is instructed to say "I don't know" and offer a human rather than invent policies.
 
+## Billing (Stripe self-serve signup)
+
+The pricing page at `/pricing/` offers three plans — **Starter** ($500 setup + $99/mo), **Growth** ($1,000 setup + $199/mo), **Scale** ($2,500 setup + $399/mo). The flow is fully self-serve:
+
+1. A visitor enters their business name + admin username and clicks a Subscribe button → `GET /api/billing/checkout?plan=…` creates a Stripe Checkout Session (subscription for the monthly plan **plus** the one-time setup fee as a second line item) and redirects them to Stripe's hosted page.
+2. On payment, Stripe calls `POST /api/billing/webhook` (event `checkout.session.completed`, signature-verified with `STRIPE_WEBHOOK_SECRET`). The server **idempotently** provisions the business, creates its first admin (random `cb-…` password), and stashes the credentials in the `provisions` table.
+3. Stripe redirects the buyer to `/pricing/success.html?session_id={CHECKOUT_SESSION_ID}`, which fetches `GET /api/billing/success?session_id=` — the credentials are returned **exactly once** (the row is deleted on read) and displayed with copy buttons and a "shown once" warning.
+4. Paid clients manage their subscription from the admin dashboard (Settings → Billing) via `POST /api/admin/billing/portal`, which opens the Stripe customer portal.
+
+Setup: create three recurring monthly USD prices in the Stripe Dashboard and set `STRIPE_SECRET_KEY`, `STRIPE_PRICE_STARTER/GROWTH/SCALE`, and `STRIPE_WEBHOOK_SECRET` (webhook endpoint: `https://YOUR-HOST/api/billing/webhook`, event `checkout.session.completed`). See `.env.example`.
+
+When the Stripe keys are absent, `/pricing/` renders a "Contact us to get started" mailto CTA instead of buy buttons, and the billing endpoints (`/api/billing/checkout`, `/api/billing/webhook`, `/api/billing/portal`) return clean `503 { error: 'billing not configured' }` responses — the server never crashes.
+
 ## API reference (for integrations)
 
 | Method & path | Auth | Purpose |
@@ -87,13 +100,22 @@ Any OpenAI-compatible `/chat/completions` endpoint works (OpenAI, Azure, Ollama,
 | `GET/POST/PUT/DELETE /api/admin/faqs…` | session | Knowledge base CRUD (business-scoped) |
 | `POST /api/admin/crawl` | session | `{url, max_pages}` → crawls the website in the background and imports its pages into the knowledge base (Q/A pairs when an LLM is configured, raw chunks otherwise) |
 | `GET /api/admin/documents`, `DELETE /api/admin/documents/:id` | session | List / delete crawled knowledge documents |
-| `GET/PUT /api/admin/settings` | session | Business name, welcome message, brand color, support email, lead-capture toggle, default language, auto-translate toggle, allowed origins, LLM config (secrets returned as `*_set` flags, never values) |
+| `GET/PUT /api/admin/settings` | session | Business name, welcome message, brand color, support email, lead-capture toggle, default language, auto-translate toggle, voice input/output toggle, allowed origins, LLM config (secrets returned as `*_set` flags, never values) |
 | `GET /api/admin/webhook`, `POST /api/admin/webhook/regenerate` | session | Webhook secret status / rotation (plaintext shown once) |
 | `GET /api/admin/leads[?format=csv]` | session | Leads, CSV-exportable |
 | `GET /api/admin/sessions[?flagged=1]`, `GET /api/admin/sessions/:id`, `POST …/resolve` | session | Conversations & transcripts, human-follow-up queue |
 | `GET/POST/DELETE /api/admin/orders…` | session | Mock order store management |
-| `GET /api/admin/analytics` | session | Chats/day, top unanswered questions, lead counts, resolution-rate estimate |
+| `GET /api/admin/analytics` | session | Chats/day, top unanswered questions, lead counts, resolution-rate estimate, CSAT (thumbs feedback with 14-day trend), and the resolution funnel (answered / escalated / leads) |
 | `POST /api/admin/change-password` | session | Rotate the admin password |
+| `POST /api/feedback` | API key in body (CORS-open, rate-limited) | `{api_key, session_id, message_id, rating}` — CSAT thumbs vote (rating 0/1); the widget renders 👍/👎 under each bot reply |
+| `GET /api/nudge?key=&session_id=` | API key (CORS-open, rate-limited) | Returns unshown proactive messages for the session and marks them shown |
+| `POST /api/admin/nudges` | session | `{text, target}` — send a proactive message to all sessions active in the last 15 min (`target: 'active'`) or one session id (≤500 chars) |
+| `GET /api/admin/nudges` | session | Recent nudges (text, target session, shown status) |
+| `GET /api/billing/status` | — | `{configured: bool}` — whether Stripe billing is enabled |
+| `GET /api/billing/checkout?plan=&business_name=&admin_username=` | — | Creates a Stripe Checkout Session (subscription + one-time setup fee) and redirects (303) to Stripe; 503 when billing is unconfigured |
+| `POST /api/billing/webhook` | Stripe signature (`STRIPE_WEBHOOK_SECRET`) | `checkout.session.completed` → idempotently provisions the business + admin |
+| `GET /api/billing/success?session_id=` | — | Returns the provisioned credentials **exactly once**, then deletes them |
+| `POST /api/admin/billing/portal` | session | Opens the Stripe customer portal for the logged-in business |
 
 ## Origin allowlist (widget security)
 
@@ -180,7 +202,7 @@ Go through this before pointing real traffic (and paying clients) at the app:
    - `ENCRYPTION_KEY` — long random string (AES-256-GCM for per-business LLM keys at rest). If unset, newly saved LLM keys are rejected and previously stored keys can't be decrypted — the bot falls back to FAQ-only mode. Changing it later orphans previously stored keys.
    - `TRUST_PROXY=1` — when behind a reverse proxy / load balancer (Render, Railway, nginx…), so rate limiting and logging see the real client IP.
    - `PORT`, `DB_PATH` as needed; `LLM_*` for the global AI brain default.
-   - Tune rate limits: `RATE_LIMIT_CHAT_PER_MIN` (30), `RATE_LIMIT_CONFIG_PER_MIN` (120), `RATE_LIMIT_WEBHOOK_PER_MIN` (60), `RATE_LIMIT_LOGIN_PER_MIN` (10). `0` disables a limiter (not recommended).
+   - Tune rate limits: `RATE_LIMIT_CHAT_PER_MIN` (30), `RATE_LIMIT_CONFIG_PER_MIN` (120), `RATE_LIMIT_WEBHOOK_PER_MIN` (60), `RATE_LIMIT_LOGIN_PER_MIN` (10), `RATE_LIMIT_FEEDBACK_PER_MIN` (30), `RATE_LIMIT_NUDGE_PER_MIN` (60). `0` disables a limiter (not recommended).
 2. **Admin credentials** — rotate every seeded/provisioned password on first login (Admin → Settings → Change password, min 8 chars). Consider one admin user per client staff member.
 3. **HTTPS** — terminate TLS at your reverse proxy (nginx, Caddy, or your PaaS). Set the session cookie `secure` flag if you ever move off `sameSite: lax` defaults — with HTTPS in front, cookies are safe.
 4. **Origin allowlist** — set `allowed_origins` for every client (Admin → Settings). Empty means "any site may embed this widget".

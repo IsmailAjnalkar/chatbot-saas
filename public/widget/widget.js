@@ -27,20 +27,30 @@
 
   // UI strings for the widget chrome (bot replies are translated server-side).
   var STRINGS = {
-    en: { placeholder: 'Type a message…', inputAria: 'Type your message', sendAria: 'Send', openChat: 'Open chat', closeChat: 'Close chat', subtitle: 'Typically replies instantly', error: 'Sorry, something went wrong. Please try again in a moment.' },
-    es: { placeholder: 'Escribe un mensaje…', inputAria: 'Escribe tu mensaje', sendAria: 'Enviar', openChat: 'Abrir chat', closeChat: 'Cerrar chat', subtitle: 'Suele responder al instante', error: 'Lo sentimos, algo salió mal. Inténtalo de nuevo en un momento.' },
-    fr: { placeholder: 'Écrivez un message…', inputAria: 'Écrivez votre message', sendAria: 'Envoyer', openChat: 'Ouvrir le chat', closeChat: 'Fermer le chat', subtitle: 'Répond généralement instantanément', error: 'Désolé, une erreur est survenue. Veuillez réessayer dans un instant.' },
-    de: { placeholder: 'Nachricht eingeben…', inputAria: 'Nachricht eingeben', sendAria: 'Senden', openChat: 'Chat öffnen', closeChat: 'Chat schließen', subtitle: 'Antwortet in der Regel sofort', error: 'Entschuldigung, etwas ist schiefgelaufen. Bitte versuchen Sie es gleich erneut.' },
-    pt: { placeholder: 'Digite uma mensagem…', inputAria: 'Digite sua mensagem', sendAria: 'Enviar', openChat: 'Abrir bate-papo', closeChat: 'Fechar bate-papo', subtitle: 'Normalmente responde na hora', error: 'Desculpe, algo deu errado. Tente novamente em instantes.' },
-    hi: { placeholder: 'संदेश लिखें…', inputAria: 'अपना संदेश लिखें', sendAria: 'भेजें', openChat: 'चैट खोलें', closeChat: 'चैट बंद करें', subtitle: 'आमतौर पर तुरंत जवाब देता है', error: 'माफ़ करें, कुछ गड़बड़ हो गई। कृपया थोड़ी देर में पुनः प्रयास करें।' },
-    ar: { placeholder: 'اكتب رسالة…', inputAria: 'اكتب رسالتك', sendAria: 'إرسال', openChat: 'فتح الدردشة', closeChat: 'إغلاق الدردشة', subtitle: 'يرد عادةً على الفور', error: 'عذرًا، حدث خطأ ما. يرجى المحاولة مرة أخرى بعد قليل.' },
+    en: { placeholder: 'Type a message…', inputAria: 'Type your message', sendAria: 'Send', openChat: 'Open chat', closeChat: 'Close chat', subtitle: 'Typically replies instantly', error: 'Sorry, something went wrong. Please try again in a moment.', thumbsUp: 'Mark reply as helpful', thumbsDown: 'Mark reply as not helpful', mic: 'Voice input', listening: 'Listening…', speakOn: 'Read replies aloud', speakOff: 'Stop reading aloud', teamNote: 'Message from the team' },
+    es: { placeholder: 'Escribe un mensaje…', inputAria: 'Escribe tu mensaje', sendAria: 'Enviar', openChat: 'Abrir chat', closeChat: 'Cerrar chat', subtitle: 'Suele responder al instante', error: 'Lo sentimos, algo salió mal. Inténtalo de nuevo en un momento.', thumbsUp: 'Marcar la respuesta como útil', thumbsDown: 'Marcar la respuesta como no útil', mic: 'Entrada de voz', listening: 'Escuchando…', speakOn: 'Leer las respuestas en voz alta', speakOff: 'Dejar de leer en voz alta', teamNote: 'Mensaje del equipo' },
+    fr: { placeholder: 'Écrivez un message…', inputAria: 'Écrivez votre message', sendAria: 'Envoyer', openChat: 'Ouvrir le chat', closeChat: 'Fermer le chat', subtitle: 'Répond généralement instantanément', error: 'Désolé, une erreur est survenue. Veuillez réessayer dans un instant.', thumbsUp: 'Marquer la réponse comme utile', thumbsDown: 'Marquer la réponse comme non utile', mic: 'Saisie vocale', listening: 'Écoute…', speakOn: 'Lire les réponses à voix haute', speakOff: 'Arrêter la lecture à voix haute', teamNote: 'Message de l’équipe' },
+    de: { placeholder: 'Nachricht eingeben…', inputAria: 'Nachricht eingeben', sendAria: 'Senden', openChat: 'Chat öffnen', closeChat: 'Chat schließen', subtitle: 'Antwortet in der Regel sofort', error: 'Entschuldigung, etwas ist schiefgelaufen. Bitte versuchen Sie es gleich erneut.', thumbsUp: 'Als hilfreich markieren', thumbsDown: 'Als nicht hilfreich markieren', mic: 'Spracheingabe', listening: 'Höre zu…', speakOn: 'Antworten vorlesen', speakOff: 'Vorlesen beenden', teamNote: 'Nachricht vom Team' },
+    pt: { placeholder: 'Digite uma mensagem…', inputAria: 'Digite sua mensagem', sendAria: 'Enviar', openChat: 'Abrir bate-papo', closeChat: 'Fechar bate-papo', subtitle: 'Normalmente responde na hora', error: 'Desculpe, algo deu errado. Tente novamente em instantes.', thumbsUp: 'Marcar a resposta como útil', thumbsDown: 'Marcar a resposta como não útil', mic: 'Entrada de voz', listening: 'Ouvindo…', speakOn: 'Ler as respostas em voz alta', speakOff: 'Parar de ler em voz alta', teamNote: 'Mensagem da equipe' },
+    hi: { placeholder: 'संदेश लिखें…', inputAria: 'अपना संदेश लिखें', sendAria: 'भेजें', openChat: 'चैट खोलें', closeChat: 'चैट बंद करें', subtitle: 'आमतौर पर तुरंत जवाब देता है', error: 'माफ़ करें, कुछ गड़बड़ हो गई। कृपया थोड़ी देर में पुनः प्रयास करें।', thumbsUp: 'जवाब को उपयोगी बताएं', thumbsDown: 'जवाब को अनुपयोगी बताएं', mic: 'आवाज़ इनपुट', listening: 'सुन रहा है…', speakOn: 'जवाब ज़ोर से पढ़ें', speakOff: 'ज़ोर से पढ़ना बंद करें', teamNote: 'टीम का संदेश' },
+    ar: { placeholder: 'اكتب رسالة…', inputAria: 'اكتب رسالتك', sendAria: 'إرسال', openChat: 'فتح الدردشة', closeChat: 'إغلاق الدردشة', subtitle: 'يرد عادةً على الفور', error: 'عذرًا، حدث خطأ ما. يرجى المحاولة مرة أخرى بعد قليل.', thumbsUp: 'وضع علامة على الرد كمفيد', thumbsDown: 'وضع علامة على الرد كغير مفيد', mic: 'إدخال صوتي', listening: 'أستمع…', speakOn: 'قراءة الردود بصوت عالٍ', speakOff: 'إيقاف القراءة بصوت عالٍ', teamNote: 'رسالة من الفريق' },
   };
   var RTL_LANGS = { ar: true };
+
+  // Voice input/output helpers.
+  var VOICE_LANGS = { en: 'en-US', es: 'es-ES', fr: 'fr-FR', de: 'de-DE', pt: 'pt-BR', hi: 'hi-IN', ar: 'ar-SA' };
+  var SPEECH_REC = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var SPEAKER_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>';
+  var MIC_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4"/></svg>';
+  // Read-aloud toggle, persisted per widget key.
+  var speakKey = 'cb_speak_' + API_KEY;
+  var speakOn = false;
+  try { speakOn = localStorage.getItem(speakKey) === '1'; } catch (e) {}
 
   var sessionId = null;
   try { sessionId = localStorage.getItem('cb_session_' + API_KEY); } catch (e) {}
 
-  var cfg = { business_name: 'Support', welcome_message: 'Hi! How can I help?', brand_color: '#4f46e5', bot_name: 'Assistant', default_language: 'en' };
+  var cfg = { business_name: 'Support', welcome_message: 'Hi! How can I help?', brand_color: '#4f46e5', bot_name: 'Assistant', default_language: 'en', voice_enabled: true };
   var T = STRINGS.en; // resolved UI strings (set once config arrives)
 
   function el(tag, cls, html) {
@@ -76,6 +86,9 @@
     var header = el('div', 'cbw-header',
       '<div class="cbw-avatar">' + esc(cfg.business_name.charAt(0).toUpperCase()) + '</div>' +
       '<div class="cbw-title"><strong>' + esc(cfg.bot_name) + '</strong><span>' + esc(T.subtitle) + '</span></div>' +
+      (cfg.voice_enabled !== false
+        ? '<button class="cbw-speaker' + (speakOn ? ' cbw-speaking' : '') + '" aria-label="' + esc(speakOn ? T.speakOff : T.speakOn) + '">' + SPEAKER_SVG + '</button>'
+        : '') +
       '<button class="cbw-close" aria-label="' + esc(T.closeChat) + '">&times;</button>');
 
     var body = el('div', 'cbw-body');
@@ -91,6 +104,16 @@
 
     footer.appendChild(input);
     footer.appendChild(send);
+
+    // Mic button (voice input) — only when the business allows voice and the
+    // browser supports speech recognition.
+    var micBtn = null;
+    if (cfg.voice_enabled !== false && SPEECH_REC) {
+      micBtn = el('button', 'cbw-mic', MIC_SVG);
+      micBtn.setAttribute('aria-label', T.mic);
+      micBtn.addEventListener('click', listenOnce);
+      footer.insertBefore(micBtn, send);
+    }
     panel.appendChild(header);
     panel.appendChild(body);
     panel.appendChild(chips);
@@ -107,7 +130,101 @@
       if (opened) input.focus();
     }
     launcher.addEventListener('click', function () { toggle(); });
-    header.querySelector('.cbw-close').addEventListener('click', function () { toggle(false); });
+    header.querySelector('.cbw-close').addEventListener('click', function () { stopSpeaking(); toggle(false); });
+
+    // Speaker toggle (read-aloud). Persisted; cancelled when a new reply
+    // arrives or the panel closes.
+    var speakerBtn = header.querySelector('.cbw-speaker');
+    if (speakerBtn) {
+      speakerBtn.addEventListener('click', function () {
+        speakOn = !speakOn;
+        try { localStorage.setItem(speakKey, speakOn ? '1' : '0'); } catch (e) {}
+        speakerBtn.classList.toggle('cbw-speaking', speakOn);
+        speakerBtn.setAttribute('aria-label', speakOn ? T.speakOff : T.speakOn);
+        if (!speakOn) stopSpeaking();
+      });
+    }
+
+    function stopSpeaking() {
+      try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {}
+    }
+    function speak(text) {
+      if (!speakOn || !window.speechSynthesis || !text) return;
+      stopSpeaking();
+      try {
+        var u = new SpeechSynthesisUtterance(text);
+        u.lang = VOICE_LANGS[T.lang] || 'en-US';
+        window.speechSynthesis.speak(u);
+      } catch (e) { /* speech synthesis unavailable */ }
+    }
+
+    // Voice input: one recognition pass, result lands in the input box.
+    var listening = false;
+    function listenOnce() {
+      if (listening) return;
+      var rec;
+      try { rec = new SPEECH_REC(); } catch (e) { return; }
+      rec.lang = VOICE_LANGS[T.lang] || 'en-US';
+      rec.interimResults = false;
+      rec.maxAlternatives = 1;
+      listening = true;
+      if (micBtn) { micBtn.classList.add('cbw-listening'); micBtn.setAttribute('aria-label', T.listening); }
+      rec.onresult = function (e) {
+        var t = '';
+        try { t = e.results[0][0].transcript; } catch (err) {}
+        if (t) { input.value = t; input.focus(); }
+      };
+      var stop = function () {
+        listening = false;
+        if (micBtn) { micBtn.classList.remove('cbw-listening'); micBtn.setAttribute('aria-label', T.mic); }
+      };
+      rec.onend = stop;
+      rec.onerror = stop;
+      try { rec.start(); } catch (e) { stop(); }
+    }
+
+    // CSAT thumbs under a bot reply — POSTs to /api/feedback, then locks in.
+    function attachFeedback(bubble, messageId) {
+      var fb = el('div', 'cbw-feedback');
+      var up = el('button', 'cbw-fb', '👍');
+      var down = el('button', 'cbw-fb', '👎');
+      up.setAttribute('aria-label', T.thumbsUp); up.setAttribute('title', T.thumbsUp);
+      down.setAttribute('aria-label', T.thumbsDown); down.setAttribute('title', T.thumbsDown);
+      function rate(rating, btn) {
+        fetch(API_URL + '/api/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_key: API_KEY, session_id: sessionId, message_id: messageId, rating: rating }),
+        }).then(function (res) {
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          up.disabled = true; down.disabled = true;
+          fb.classList.add('cbw-rated');
+          btn.classList.add('cbw-fb-chosen');
+        }).catch(function () { /* leave active so the visitor can retry */ });
+      }
+      up.addEventListener('click', function () { rate(1, up); });
+      down.addEventListener('click', function () { rate(0, down); });
+      fb.appendChild(up);
+      fb.appendChild(down);
+      bubble.appendChild(fb);
+    }
+
+    // Proactive nudges: polled every 20s, shown as "message from the team".
+    function showNudge(n) {
+      var bubble = addMsg('bot', renderBot(n.text));
+      bubble.parentNode.classList.add('cbw-nudge');
+      bubble.insertBefore(el('div', 'cbw-team', esc(T.teamNote)), bubble.firstChild);
+      speak(n.text);
+      scrollDown();
+    }
+    function pollNudges() {
+      if (!sessionId) return;
+      fetch(API_URL + '/api/nudge?key=' + encodeURIComponent(API_KEY) + '&session_id=' + encodeURIComponent(sessionId))
+        .then(function (res) { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
+        .then(function (j) { (j.nudges || []).forEach(showNudge); })
+        .catch(function () { /* silent — next poll retries */ });
+    }
+    setInterval(pollNudges, 20000);
 
     function scrollDown() { body.scrollTop = body.scrollHeight; }
 
@@ -146,6 +263,7 @@
       text = (text || '').trim();
       if (!text || busy) return;
       busy = true;
+      stopSpeaking(); // cancel read-aloud when the visitor sends a new message
       addMsg('user', esc(text));
       input.value = '';
       chips.innerHTML = '';
@@ -203,6 +321,8 @@
               (o.tracking_number ? 'Tracking: ' + esc(o.tracking_number) : '') + '</div>');
           }
           if (meta && meta.suggestions) addChips(meta.suggestions);
+          if (bubble && meta && meta.messageId) attachFeedback(bubble, meta.messageId);
+          if (acc) speak(acc);
         }
         return pump();
       }).catch(function () {
@@ -221,6 +341,7 @@
     setTimeout(function () {
       addMsg('bot', renderBot(cfg.welcome_message));
       addChips(['Track my order', 'Return policy', 'Talk to a human']);
+      speak(cfg.welcome_message);
     }, 600);
 
     return { sendMessage: sendMessage };

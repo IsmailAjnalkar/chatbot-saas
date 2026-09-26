@@ -13,6 +13,7 @@
 
 require('dotenv').config();
 const path = require('path');
+const crypto = require('crypto');
 const express = require('express');
 const session = require('express-session');
 const db = require('./lib/db');
@@ -29,6 +30,10 @@ const SESSION_SECRET = process.env.SESSION_SECRET || 'dev-change-me';
 // trust the first hop so req.ip reflects the real client for rate limiting.
 if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
 
+// Stripe billing webhook — mounted BEFORE express.json so the signature can be
+// verified against the raw body bytes (Stripe requires the exact payload).
+app.post('/api/billing/webhook', express.raw({ type: '*/*', limit: '2mb' }), billingWebhook);
+
 app.use(express.json({ limit: '1mb' }));
 app.use(session({
   secret: SESSION_SECRET,
@@ -43,6 +48,13 @@ app.use('/api/config', (req, res, next) => {
   next();
 });
 app.use('/api/chat', (req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+// Same pattern for the other public widget endpoints.
+app.use(['/api/feedback', '/api/nudge'], (req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
@@ -71,6 +83,14 @@ const loginLimiter = createLimiter({
   max: envInt('RATE_LIMIT_LOGIN_PER_MIN', 10),
   keyFn: (req) => `login:${req.ip}`,
   message: 'too many login attempts, please try again later',
+});
+const feedbackLimiter = createLimiter({
+  max: envInt('RATE_LIMIT_FEEDBACK_PER_MIN', 30),
+  keyFn: (req) => `fb:${(req.body && req.body.api_key) || ''}:${req.ip}`,
+});
+const nudgeLimiter = createLimiter({
+  max: envInt('RATE_LIMIT_NUDGE_PER_MIN', 60),
+  keyFn: (req) => `nudge:${req.query.key || ''}:${req.ip}`,
 });
 
 // ---------- origin allowlist for the widget config ----------
@@ -121,6 +141,7 @@ app.get('/api/config', configLimiter, async (req, res) => {
     support_email: s.support_email || '',
     bot_name: s.bot_name || `${business.name} Assistant`,
     default_language: s.default_language || 'en',
+    voice_enabled: s.voice_enabled !== false,
   });
 });
 
@@ -167,8 +188,8 @@ app.post('/api/chat/stream', chatLimiter, async (req, res) => {
     if (batch) res.write(`data: ${JSON.stringify({ token: batch })}\n\n`);
     if (i >= chunks.length) {
       clearInterval(timer);
-      const { sessionId, type, confidence, suggestions, orderCard } = result;
-      res.write(`data: ${JSON.stringify({ done: true, meta: { sessionId, type, confidence, suggestions, orderCard } })}\n\n`);
+      const { sessionId, type, confidence, suggestions, orderCard, messageId } = result;
+      res.write(`data: ${JSON.stringify({ done: true, meta: { sessionId, type, confidence, suggestions, orderCard, messageId } })}\n\n`);
       res.end();
     }
   }, 35);
@@ -197,6 +218,163 @@ app.post('/api/webhook/orders', webhookLimiter, async (req, res) => {
     }));
   }
   res.json({ ok: true, upserted: saved.length });
+});
+
+// ---------- Stripe billing (self-serve signup) ----------
+// Never crashes when unconfigured: every entry point returns
+// 503 { error: 'billing not configured' } if the Stripe keys are absent.
+const BILLING_PLANS = {
+  starter: { env: 'STRIPE_PRICE_STARTER', setupCents: 50000, label: 'Starter' },
+  growth:  { env: 'STRIPE_PRICE_GROWTH',  setupCents: 100000, label: 'Growth' },
+  scale:   { env: 'STRIPE_PRICE_SCALE',   setupCents: 250000, label: 'Scale' },
+};
+function getStripe() {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) return null;
+  return require('stripe')(key); // lazy: module stays optional when unconfigured
+}
+function billingConfigured() {
+  return !!(process.env.STRIPE_SECRET_KEY &&
+    process.env.STRIPE_PRICE_STARTER &&
+    process.env.STRIPE_PRICE_GROWTH &&
+    process.env.STRIPE_PRICE_SCALE);
+}
+app.get('/api/billing/status', (req, res) => {
+  res.json({ configured: billingConfigured() });
+});
+// Create a subscription Checkout Session (recurring plan + one-time setup fee)
+// and redirect the visitor to Stripe's hosted page.
+app.get('/api/billing/checkout', async (req, res) => {
+  const plan = BILLING_PLANS[req.query.plan];
+  if (!plan) return res.status(400).json({ error: 'invalid plan (starter|growth|scale)' });
+  if (!billingConfigured()) return res.status(503).json({ error: 'billing not configured' });
+  const businessName = String(req.query.business_name || '').trim();
+  const adminUsername = String(req.query.admin_username || '').trim();
+  if (!businessName || !adminUsername)
+    return res.status(400).json({ error: 'business_name and admin_username are required' });
+  try {
+    const stripe = getStripe();
+    const base = `${req.protocol}://${req.get('host')}`;
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      line_items: [
+        { price: process.env[plan.env] },
+        {
+          price_data: {
+            currency: 'usd',
+            unit_amount: plan.setupCents,
+            product_data: { name: `Setup fee — ${plan.label} plan` },
+          },
+        },
+      ],
+      success_url: `${base}/pricing/success.html?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${base}/pricing/`,
+      metadata: { plan: req.query.plan, business_name: businessName, admin_username: adminUsername },
+    });
+    res.redirect(303, session.url);
+  } catch (err) {
+    console.error('[billing] checkout failed:', err.message);
+    res.status(502).json({ error: 'could not create a checkout session' });
+  }
+});
+// Idempotent provisioning from a completed checkout: create the business and
+// its first admin, then stash the credentials so success.html can show them once.
+async function provisionFromCheckout(s) {
+  const existing = await db.getProvision(s.id);
+  if (existing) {
+    console.log('[billing] session already provisioned, skipping:', s.id);
+    return existing;
+  }
+  // The provisions row is deleted once the success page shows the credentials,
+  // so a replayed delivery must also recognize the business we already made.
+  if (await db.getBusinessByStripeSession(s.id)) {
+    console.log('[billing] session already provisioned (credentials claimed), skipping:', s.id);
+    return null;
+  }
+  const plan = (s.metadata && s.metadata.plan) || 'starter';
+  const name = (s.metadata && s.metadata.business_name) || 'New Business';
+  const username = (s.metadata && s.metadata.admin_username) ||
+    ('admin-' + crypto.randomBytes(3).toString('hex'));
+  const business = await db.createBusiness({
+    name,
+    settings: {
+      plan,
+      stripe_session_id: s.id,
+      stripe_customer_id: s.customer || null,
+      stripe_subscription_id: s.subscription || null,
+    },
+  });
+  const password = 'cb-' + crypto.randomBytes(8).toString('hex');
+  await db.createAdmin(business.id, username, password);
+  console.log(`[billing] provisioned business "${name}" (${business.id}) from session ${s.id}`);
+  return db.addProvision({
+    stripeSessionId: s.id,
+    businessId: business.id,
+    adminUsername: username,
+    adminPassword: password,
+  });
+}
+async function billingWebhook(req, res) {
+  if (!billingConfigured() || !process.env.STRIPE_WEBHOOK_SECRET)
+    return res.status(503).json({ error: 'billing not configured' });
+  let event;
+  try {
+    event = getStripe().webhooks.constructEvent(
+      req.body, req.get('stripe-signature'), process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.error('[billing] webhook signature invalid:', err.message);
+    return res.status(400).json({ error: 'invalid webhook signature' });
+  }
+  if (event.type === 'checkout.session.completed') {
+    try {
+      await provisionFromCheckout(event.data.object);
+    } catch (err) {
+      console.error('[billing] provisioning failed:', err.message);
+      return res.status(500).json({ error: 'provisioning failed, will retry via webhook' });
+    }
+  }
+  res.json({ received: true });
+}
+// One-time credential handoff for the success page: returns the provisioned
+// credentials, then deletes the row so they can never be read again.
+app.get('/api/billing/success', async (req, res) => {
+  const prov = await db.getProvision(req.query.session_id || '');
+  if (!prov) return res.status(404).json({ error: 'no pending credentials for this session' });
+  const biz = await db.getBusinessById(prov.business_id);
+  await db.deleteProvision(prov.stripe_session_id);
+  res.json({
+    business_name: biz ? biz.name : '',
+    admin_username: prov.admin_username,
+    admin_password: prov.admin_password,
+    api_key: biz ? biz.api_key : '',
+    admin_url: `${req.protocol}://${req.get('host')}/admin/`,
+  });
+});
+// Customer billing portal (admin session required, business-scoped).
+// (route defined on the admin router, below)
+
+// ---------- public widget endpoints: feedback + nudges ----------
+// POST /api/feedback  {api_key, session_id, message_id, rating} — CSAT thumbs vote.
+app.post('/api/feedback', feedbackLimiter, async (req, res) => {
+  const { api_key, session_id, message_id, rating } = req.body || {};
+  const business = await db.getBusinessByKey(api_key || '');
+  if (!business) return res.status(401).json({ error: 'invalid api key' });
+  if (rating !== 0 && rating !== 1 && rating !== '0' && rating !== '1')
+    return res.status(400).json({ error: 'rating must be 0 or 1' });
+  const s = await db.getSession(session_id || '');
+  if (!s || s.business_id !== business.id) return res.status(404).json({ error: 'session not found' });
+  const m = await db.getMessageById(Number(message_id) || 0);
+  if (!m || m.session_id !== s.id) return res.status(404).json({ error: 'message not found' });
+  await db.addFeedback(business.id, s.id, m.id, Number(rating));
+  res.json({ ok: true });
+});
+// GET /api/nudge?key=&session_id= — fetch + mark-shown pending nudges.
+app.get('/api/nudge', nudgeLimiter, async (req, res) => {
+  const business = await db.getBusinessByKey(req.query.key || '');
+  if (!business) return res.status(401).json({ error: 'invalid api key' });
+  const s = await db.getSession(req.query.session_id || '');
+  if (!s || s.business_id !== business.id) return res.status(404).json({ error: 'session not found' });
+  res.json({ nudges: await db.getPendingNudges(business.id, s.id) });
 });
 
 // ---------- auth ----------
@@ -296,7 +474,7 @@ admin.get('/settings', async (req, res) => {
 admin.put('/settings', async (req, res) => {
   const allowed = ['welcome_message', 'brand_color', 'support_email', 'bot_name',
     'lead_capture_enabled', 'llm_enabled', 'llm_base_url', 'llm_model', 'allowed_origins',
-    'default_language', 'auto_translate'];
+    'default_language', 'auto_translate', 'voice_enabled'];
   const b = await db.getBusinessById(req.businessId);
   const next = { ...b.settings };
   for (const k of allowed) if (req.body[k] !== undefined) next[k] = req.body[k];
@@ -387,7 +565,48 @@ admin.get('/analytics', async (req, res) => {
     top_unanswered: await db.topUnanswered(biz, 10),
     leads_30d: await db.leadCount(biz, 30),
     resolution: await db.resolutionStats(biz, 30),
+    csat: await db.feedbackStats(biz, 14),
+    funnel: await db.funnelStats(biz, 30),
   });
+});
+
+// Proactive messaging (nudges)
+admin.post('/nudges', async (req, res) => {
+  const { text, target } = req.body || {};
+  const clean = String(text || '').trim();
+  if (!clean) return res.status(400).json({ error: 'text is required' });
+  if (clean.length > 500) return res.status(400).json({ error: 'text must be 500 characters or less' });
+  let sessions;
+  if (!target || target === 'active') {
+    sessions = await db.recentlyActiveSessions(req.businessId, 15);
+  } else {
+    const s = await db.getSession(String(target));
+    if (!s || s.business_id !== req.businessId) return res.status(404).json({ error: 'session not found' });
+    sessions = [s];
+  }
+  for (const s of sessions) await db.addNudge(req.businessId, s.id, clean);
+  res.json({ ok: true, sent: sessions.length });
+});
+admin.get('/nudges', async (req, res) => {
+  res.json(await db.listNudges(req.businessId, 50));
+});
+
+// Stripe billing portal for the logged-in business (self-serve plan management).
+admin.post('/billing/portal', async (req, res) => {
+  if (!billingConfigured()) return res.status(503).json({ error: 'billing not configured' });
+  const b = await db.getBusinessById(req.businessId);
+  const customer = b.settings && b.settings.stripe_customer_id;
+  if (!customer) return res.status(400).json({ error: 'no Stripe customer on file for this business' });
+  try {
+    const portal = await getStripe().billingPortal.sessions.create({
+      customer,
+      return_url: `${req.protocol}://${req.get('host')}/admin/`,
+    });
+    res.json({ url: portal.url });
+  } catch (err) {
+    console.error('[billing] portal failed:', err.message);
+    res.status(502).json({ error: 'could not open the billing portal' });
+  }
 });
 
 // API key (public widget key — safe to display; it's embedded in client sites)
@@ -424,6 +643,7 @@ app.get('/api/health', async (req, res) => {
 app.use('/widget', express.static(path.join(__dirname, 'public', 'widget')));
 app.use('/demo', express.static(path.join(__dirname, 'public', 'demo')));
 app.use('/admin', express.static(path.join(__dirname, 'public', 'admin')));
+app.use('/pricing', express.static(path.join(__dirname, 'public', 'pricing')));
 app.get('/', (req, res) => res.redirect('/demo/'));
 
 app.listen(PORT, () => {

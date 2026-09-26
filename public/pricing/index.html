@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pricing — Customer-Service Chatbot</title>
+<link rel="stylesheet" href="pricing.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <strong>🤖 Chatbot SaaS</strong>
+    <nav><a href="/demo/">Live demo</a><a href="/admin/">Sign in</a></nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="hero">
+    <h1>Your own AI support agent, live in a day</h1>
+    <p>Paste one <code>&lt;script&gt;</code> tag into your site. We handle the bot, hosting, and updates — you get answered customers, tracked orders, and captured leads.</p>
+  </section>
+
+  <section class="cards">
+    <div class="card">
+      <h2>Starter</h2>
+      <div class="price"><span class="setup">$500</span> setup <span class="per">+ $99/mo</span></div>
+      <ul>
+        <li>1 chatbot on 1 website</li>
+        <li>Up to 500 chats / month</li>
+        <li>FAQ knowledge base</li>
+        <li>Order tracking answers</li>
+        <li>Lead capture to your inbox</li>
+      </ul>
+    </div>
+    <div class="card featured">
+      <div class="badge">Most popular</div>
+      <h2>Growth</h2>
+      <div class="price"><span class="setup">$1,000</span> setup <span class="per">+ $199/mo</span></div>
+      <ul>
+        <li>1 chatbot on up to 3 websites</li>
+        <li>Up to 2,500 chats / month</li>
+        <li>Everything in Starter</li>
+        <li>Website auto-import (crawl)</li>
+        <li>Proactive visitor nudges</li>
+        <li>CSAT feedback &amp; analytics</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h2>Scale</h2>
+      <div class="price"><span class="setup">$2,500</span> setup <span class="per">+ $399/mo</span></div>
+      <ul>
+        <li>Up to 5 chatbots</li>
+        <li>Up to 10,000 chats / month</li>
+        <li>Everything in Growth</li>
+        <li>Voice input &amp; read-aloud</li>
+        <li>Multi-language auto-translate</li>
+        <li>Priority support</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="signup panel" id="signup-panel">
+    <h2>Get started</h2>
+    <p class="muted">Fill this in, pick a plan — you pay securely on Stripe and your chatbot + admin login are created instantly.</p>
+    <div class="grid2">
+      <div><label for="business-name">Business name</label>
+        <input id="business-name" placeholder="Acme Inc" autocomplete="organization"></div>
+      <div><label for="admin-username">Admin username</label>
+        <input id="admin-username" placeholder="acme-admin" autocomplete="username"></div>
+    </div>
+    <div class="err" id="signup-err" style="display:none"></div>
+    <div class="plans" id="buy-buttons">
+      <button data-plan="starter">Subscribe — Starter</button>
+      <button data-plan="growth" class="featured">Subscribe — Growth</button>
+      <button data-plan="scale">Subscribe — Scale</button>
+    </div>
+    <div class="plans" id="contact-cta" style="display:none">
+      <p class="muted">Online checkout isn't enabled yet — reach out and we'll get you set up directly:</p>
+      <a class="btn" href="mailto:sales@example.com?subject=Chatbot%20SaaS%20—%20get%20started">Contact us to get started</a>
+    </div>
+    <p class="muted small">The $500/$1,000/$2,500 setup fee is charged once today; the monthly plan starts after payment.</p>
+  </section>
+</main>
+
+<footer class="wrap muted small">Setup fee charged once via Stripe; monthly plan billed as a subscription. Cancel anytime from your admin dashboard.</footer>
+
+<script src="pricing.js"></script>
+</body>
+</html>
