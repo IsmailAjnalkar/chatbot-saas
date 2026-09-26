@@ -54,7 +54,9 @@ async function main() {
   }
 
   const adminUser = 'glowadmin';
-  const adminPass = 'glow-' + crypto.randomBytes(3).toString('hex');
+  // Stable password when ADMIN_PASSWORD is set (e.g. production); otherwise
+  // generate a random one per seed so local/dev installs don't share a default.
+  const adminPass = process.env.ADMIN_PASSWORD || ('glow-' + crypto.randomBytes(3).toString('hex'));
   await db.createAdmin(business.id, adminUser, adminPass);
 
   console.log('\nSeed complete!\n');
