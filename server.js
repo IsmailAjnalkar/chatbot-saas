@@ -18,6 +18,7 @@ const express = require('express');
 const session = require('express-session');
 const db = require('./lib/db');
 const { processMessage } = require('./lib/bot');
+const channels = require('./lib/channels');
 const { createLimiter } = require('./lib/ratelimit');
 const { encryptSecret, encryptionEnabled } = require('./lib/crypto');
 const crawl = require('./lib/crawl');
@@ -91,6 +92,11 @@ const feedbackLimiter = createLimiter({
 const nudgeLimiter = createLimiter({
   max: envInt('RATE_LIMIT_NUDGE_PER_MIN', 60),
   keyFn: (req) => `nudge:${req.query.key || ''}:${req.ip}`,
+});
+// Meta channel webhooks are server-to-server (no secret header); rate limit by IP only.
+const channelLimiter = createLimiter({
+  max: envInt('RATE_LIMIT_CHANNEL_PER_MIN', 120),
+  keyFn: (req) => `chan:${req.ip}`,
 });
 
 // ---------- origin allowlist for the widget config ----------
@@ -194,6 +200,63 @@ app.post('/api/chat/stream', chatLimiter, async (req, res) => {
     }
   }, 35);
   req.on('close', () => clearInterval(timer));
+});
+
+// ---------- WhatsApp + Messenger channel webhooks (public, Meta-verified) ----------
+// All endpoints respond 200 to Meta even on error (retry storms otherwise).
+// Inbound handling is best-effort: errors are logged, never thrown back.
+app.get('/api/channels/whatsapp/webhook', channelLimiter, (req, res) => {
+  const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN || '';
+  if (!verifyToken || req.query['hub.mode'] !== 'subscribe' || req.query['hub.verify_token'] !== verifyToken) {
+    return res.sendStatus(403);
+  }
+  res.status(200).send(req.query['hub.challenge'] || '');
+});
+app.post('/api/channels/whatsapp/webhook', channelLimiter, async (req, res) => {
+  res.sendStatus(200); // ack immediately; process best-effort below
+  try {
+    for (const entry of (req.body && req.body.entry) || []) {
+      for (const change of entry.changes || []) {
+        const value = change.value || {};
+        const phoneNumberId = (value.metadata && value.metadata.phone_number_id) || '';
+        // statuses[] (delivery/read receipts) are intentionally ignored
+        for (const msg of value.messages || []) {
+          if (!phoneNumberId || msg.type !== 'text' || !(msg.text && msg.text.body)) continue;
+          const business = await db.findBusinessBySetting('whatsapp_phone_number_id', phoneNumberId);
+          if (!business) { console.warn('[channels] WhatsApp message for unknown phone_number_id'); continue; }
+          if (business.settings.whatsapp_enabled === false) continue;
+          await channels.handleChannelMessage(business, 'whatsapp', msg.from, msg.text.body);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[channels] WhatsApp webhook error:', err.message);
+  }
+});
+app.get('/api/channels/messenger/webhook', channelLimiter, (req, res) => {
+  const verifyToken = process.env.META_VERIFY_TOKEN || '';
+  if (!verifyToken || req.query['hub.mode'] !== 'subscribe' || req.query['hub.verify_token'] !== verifyToken) {
+    return res.sendStatus(403);
+  }
+  res.status(200).send(req.query['hub.challenge'] || '');
+});
+app.post('/api/channels/messenger/webhook', channelLimiter, async (req, res) => {
+  res.sendStatus(200); // ack immediately; process best-effort below
+  try {
+    for (const entry of (req.body && req.body.entry) || []) {
+      for (const m of entry.messaging || []) {
+        const psid = m.sender && m.sender.id;
+        const text = m.message && m.message.text;
+        if (!psid || !text || (m.message && m.message.is_echo)) continue; // skip page's own echoes
+        const business = await db.findBusinessBySetting('messenger_page_id', entry.id);
+        if (!business) { console.warn('[channels] Messenger message for unknown page id'); continue; }
+        if (business.settings.messenger_enabled === false) continue;
+        await channels.handleChannelMessage(business, 'messenger', String(psid), text);
+      }
+    }
+  } catch (err) {
+    console.error('[channels] Messenger webhook error:', err.message);
+  }
 });
 
 // ---------- order webhook (documented interface for real stores) ----------
@@ -464,17 +527,25 @@ admin.get('/settings', async (req, res) => {
   const llmKeySet = !!(s.llm_api_key || s.llm_api_key_enc);
   delete s.llm_api_key;
   delete s.llm_api_key_enc;
+  const actionSecretSet = !!(s.action_webhook_secret || s.action_webhook_secret_enc);
+  delete s.action_webhook_secret;
+  delete s.action_webhook_secret_enc;
   res.json({
     name: b.name, ...s,
     llm_api_key_set: llmKeySet,
     llm_encryption_on: encryptionEnabled(),
+    action_webhook_secret_set: actionSecretSet,
     webhook_secret_set: !!b.webhook_secret_hash,
+    whatsapp_token_set: channels.whatsappConfigured(),
+    messenger_token_set: channels.messengerConfigured(),
   });
 });
 admin.put('/settings', async (req, res) => {
   const allowed = ['welcome_message', 'brand_color', 'support_email', 'bot_name',
     'lead_capture_enabled', 'llm_enabled', 'llm_base_url', 'llm_model', 'allowed_origins',
-    'default_language', 'auto_translate', 'voice_enabled'];
+    'default_language', 'auto_translate', 'voice_enabled',
+    'whatsapp_enabled', 'whatsapp_phone_number_id', 'messenger_enabled', 'messenger_page_id',
+    'actions_enabled', 'actions', 'refund_auto_approve_limit', 'action_webhook_url'];
   const b = await db.getBusinessById(req.businessId);
   const next = { ...b.settings };
   for (const k of allowed) if (req.body[k] !== undefined) next[k] = req.body[k];
@@ -490,6 +561,21 @@ admin.put('/settings', async (req, res) => {
       }
       next.llm_api_key_enc = enc;
       delete next.llm_api_key;
+    }
+  }
+  // Action webhook secret (for delegating agentic actions) — same shown-once
+  // encrypted pattern as the LLM API key; never returned by GET /settings.
+  if (req.body.action_webhook_secret !== undefined) {
+    if (req.body.action_webhook_secret === '') {
+      delete next.action_webhook_secret;
+      delete next.action_webhook_secret_enc;
+    } else {
+      const enc = encryptSecret(String(req.body.action_webhook_secret));
+      if (!enc) {
+        return res.status(400).json({ error: 'ENCRYPTION_KEY is not set on the server — cannot store the action webhook secret securely. Set it and retry.' });
+      }
+      next.action_webhook_secret_enc = enc;
+      delete next.action_webhook_secret;
     }
   }
   if (req.body.name) await db.updateBusinessName(req.businessId, req.body.name);
@@ -542,6 +628,32 @@ admin.post('/sessions/:id/resolve', async (req, res) => {
   await db.updateSession(req.params.id, { flagged_human: 0, resolved: 1 });
   res.json({ ok: true });
 });
+// Admin reply to a conversation: sends via the channel provider when
+// available (WhatsApp/Messenger), otherwise delivers as a widget nudge.
+// Always also recorded on the transcript as an assistant message.
+admin.post('/sessions/:id/reply', async (req, res) => {
+  const s = await db.getSession(req.params.id);
+  if (!s || s.business_id !== req.businessId) return res.status(404).json({ error: 'not found' });
+  const text = String((req.body && req.body.text) || '').trim();
+  if (!text) return res.status(400).json({ error: 'text is required' });
+  if (text.length > 2000) return res.status(400).json({ error: 'text must be 2000 characters or less' });
+  const business = await db.getBusinessById(req.businessId);
+  let delivered_via = 'transcript';
+  try {
+    if (s.channel === 'whatsapp' && channels.whatsappConfigured()) {
+      delivered_via = await channels.sendWhatsAppText(business, s.channel_sender, text) ? 'whatsapp' : 'transcript';
+    } else if (s.channel === 'messenger' && channels.messengerConfigured()) {
+      delivered_via = await channels.sendMessengerText(business, s.channel_sender, text) ? 'messenger' : 'transcript';
+    } else {
+      await db.addNudge(req.businessId, s.id, text);
+      delivered_via = 'nudge';
+    }
+  } catch (err) {
+    console.error('[admin] session reply send failed:', err.message);
+  }
+  await db.addMessage(s.id, 'assistant', text, { type: 'admin_reply' });
+  res.json({ ok: true, delivered_via });
+});
 
 // Orders (mock store management)
 admin.get('/orders', async (req, res) => res.json(await db.listOrders(req.businessId)));
@@ -589,6 +701,11 @@ admin.post('/nudges', async (req, res) => {
 });
 admin.get('/nudges', async (req, res) => {
   res.json(await db.listNudges(req.businessId, 50));
+});
+
+// Agentic actions audit log
+admin.get('/actions', async (req, res) => {
+  res.json(await db.listActions(req.businessId, 100));
 });
 
 // Stripe billing portal for the logged-in business (self-serve plan management).

@@ -88,6 +88,31 @@ Setup: create three recurring monthly USD prices in the Stripe Dashboard and set
 
 When the Stripe keys are absent, `/pricing/` renders a "Contact us to get started" mailto CTA instead of buy buttons, and the billing endpoints (`/api/billing/checkout`, `/api/billing/webhook`, `/api/billing/portal`) return clean `503 { error: 'billing not configured' }` responses — the server never crashes.
 
+## Messaging channels (Meta app setup)
+
+The bot can answer customers on **WhatsApp** (Cloud API) and **Facebook Messenger**, with every channel conversation landing in the admin Conversations tab marked with a channel badge (`web` / `whatsapp` / `messenger`). Without the env vars below, everything is inert — webhooks respond but nothing is sent and inbound channel messages are ignored.
+
+**1. Create a Meta app** at [developers.facebook.com](https://developers.facebook.com) → Apps → Create app (type: Business), and add the **WhatsApp** and **Messenger** products.
+
+**2. WhatsApp → API Setup**: copy the **phone number ID** and generate a long-lived **token**.
+
+**3. Register the webhooks.** In each product's Webhook configuration:
+- Callback URL: `https://YOUR-HOST/api/channels/whatsapp/webhook` (WhatsApp) and `https://YOUR-HOST/api/channels/messenger/webhook` (Messenger)
+- Verify token: the value you set for `WHATSAPP_VERIFY_TOKEN` / `META_VERIFY_TOKEN`
+- Subscribe to the **messages** webhook field, then **Verify and save**.
+
+**4. Env vars** (see `.env.example`): `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` (global fallback), `META_VERIFY_TOKEN`, `META_PAGE_ACCESS_TOKEN`.
+
+**5. Admin → Settings → Messaging channels**: enable WhatsApp / Messenger and paste the **phone number ID** / **page ID** (per-business; these win over the env fallback). Inbound messages are mapped to the business by phone-number ID (`whatsapp_phone_number_id`) or page ID (`messenger_page_id`), routed through the same bot pipeline, and the reply is sent back on the channel. The page-ID / phone-number-ID fields double as the multi-business router — each business gets its own.
+
+Notes:
+- Admin replies typed in the conversation detail modal go out over WhatsApp/Messenger when the channel token is configured; otherwise (web widget) they arrive as a widget nudge. Every reply is also stored on the transcript.
+- Messenger echoes (the page's own sent messages) are ignored to avoid reply loops.
+
+## Agentic actions
+
+When the LLM ("AI brain") is enabled, the model can call tools: `get_order_status`, `cancel_order`, `issue_refund`, `escalate_to_human` (only ever with an order number the visitor actually provided). Read-only lookups and escalation run immediately; **cancel/refund always ask the visitor to confirm first** (`"Yes, cancel it"` / `"no"`). Refunds auto-approve only up to the **refund auto-approve limit** (default $50) — larger ones are flagged for the team. Every execution is audit-logged (Admin → Actions) and toggles live in Admin → Actions (`actions_enabled`, per-action switches, `issue_refund` defaults **off**). Optionally, set **action webhook URL + secret** to delegate execution to your own system: actions are POSTed as `{action, args, business_id, session_id}` with an `X-Action-Secret` header instead of running built-in.
+
 ## API reference (for integrations)
 
 | Method & path | Auth | Purpose |
