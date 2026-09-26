@@ -94,6 +94,9 @@
     <button data-tab="convs" onclick="showTab('convs')">Conversations</button>
     <button data-tab="orders" onclick="showTab('orders')">Orders</button>
     <button data-tab="nudges" onclick="showTab('nudges')">Nudges</button>
+    <button data-tab="qalab" onclick="showTab('qalab')">QA Lab</button>
+    <button data-tab="abtests" onclick="showTab('abtests')">A/B Tests</button>
+    <button data-tab="articles" onclick="showTab('articles')">Articles</button>
     <button data-tab="actions" onclick="showTab('actions')">Actions</button>
     <button data-tab="settings" onclick="showTab('settings')">Settings</button>
   </nav>
@@ -104,6 +107,9 @@
     <div class="tab" id="tab-convs"></div>
     <div class="tab" id="tab-orders"></div>
     <div class="tab" id="tab-nudges"></div>
+    <div class="tab" id="tab-qalab"></div>
+    <div class="tab" id="tab-abtests"></div>
+    <div class="tab" id="tab-articles"></div>
     <div class="tab" id="tab-actions"></div>
     <div class="tab" id="tab-settings"></div>
   </main>
@@ -189,7 +195,7 @@ function showTab(name) {
   document.querySelectorAll('nav.tabs button').forEach(function (b) { b.classList.toggle('active', b.dataset.tab === name); });
   document.querySelectorAll('.tab').forEach(function (t) { t.classList.remove('active'); });
   document.getElementById('tab-' + name).classList.add('active');
-  ({ overview: loadOverview, faqs: loadFaqs, leads: loadLeads, convs: loadConvs, orders: loadOrders, nudges: loadNudges, actions: loadActions, settings: loadSettings })[name]();
+  ({ overview: loadOverview, faqs: loadFaqs, leads: loadLeads, convs: loadConvs, orders: loadOrders, nudges: loadNudges, qalab: loadQaLab, abtests: loadAbTests, articles: loadArticles, actions: loadActions, settings: loadSettings })[name]();
 }
 
 /* ---------- Overview ---------- */
@@ -510,6 +516,223 @@ function sendNudge() {
     ok.textContent = 'Sent to ' + r.json.sent + ' session' + (r.json.sent === 1 ? '' : 's') + ' ✓';
     loadNudges();
   });
+}
+
+/* ---------- QA Lab (bot testing playground) ---------- */
+function loadQaLab() {
+  req('GET', '/api/admin/qa/runs').then(function (r) {
+    var runs = r.json || [];
+    var rows = runs.map(function (run) {
+      var passed = 0, total = 0;
+      try { var res = JSON.parse(run.results || '[]'); total = res.length; passed = res.filter(function (x) { return x.pass; }).length; } catch (e) {}
+      return '<tr><td><strong>' + esc(run.name || 'Untitled run') + '</strong></td>' +
+        '<td>' + (total ? passed + '/' + total + ' passed' : '—') + '</td>' +
+        '<td style="color:#6b7280;white-space:nowrap">' + timeAgo(run.created_at) + '</td>' +
+        '<td style="white-space:nowrap"><button class="small" onclick="viewQaRun(' + run.id + ')">View</button> ' +
+        '<button class="small" onclick="rerunQa(' + run.id + ')">Re-run</button> ' +
+        '<button class="small ghost" onclick="delQaRun(' + run.id + ')">Delete</button></td></tr>';
+    }).join('');
+    document.getElementById('tab-qalab').innerHTML =
+      '<div class="panel"><h3>Run a scripted test conversation</h3>' +
+      '<p style="color:#6b7280;font-size:13px;margin-bottom:12px">Test the real bot without polluting analytics — test chats never create tickets or fire webhooks. One step per line: <code>your message | text you expect in the reply</code> (the part after | is optional).</p>' +
+      '<label class="lbl">Test name</label><input id="qa-name" placeholder="e.g. Refund flow happy path">' +
+      '<label class="lbl">Script steps (1–30 lines)</label><textarea id="qa-script" rows="5" placeholder="hi | hello\nwhat is your return policy | 30 days\nI want a refund for order ORD-1234"></textarea>' +
+      '<button onclick="runQa()">Run test</button> <span class="ok" id="qa-ok" style="display:none"></span></div>' +
+      '<div class="panel" id="qa-result" style="display:none"></div>' +
+      '<div class="panel"><h3>Saved runs</h3><table><tr><th>Name</th><th>Result</th><th>Ran</th><th></th></tr>' +
+      (rows || '<tr><td colspan="4" style="color:#6b7280">No test runs yet.</td></tr>') + '</table></div>';
+  });
+}
+function parseQaScript() {
+  return document.getElementById('qa-script').value.split('\n').map(function (line) {
+    var parts = line.split('|');
+    var message = (parts[0] || '').trim();
+    if (!message) return null;
+    return { message: message, expect_contains: (parts[1] || '').trim() };
+  }).filter(Boolean);
+}
+function runQa() {
+  var script = parseQaScript();
+  if (!script.length) { alert('Add at least one script step.'); return; }
+  var ok = document.getElementById('qa-ok');
+  ok.style.display = 'inline'; ok.textContent = 'Running…';
+  req('POST', '/api/admin/qa/run', { name: document.getElementById('qa-name').value.trim(), script: script }).then(function (r) {
+    ok.style.display = 'none';
+    if (r.status >= 400) { alert(r.json.error || 'QA run failed'); return; }
+    showQaResult(r.json);
+    loadQaLabList();
+  });
+}
+function showQaResult(data) {
+  var rows = (data.results || []).map(function (st, i) {
+    return '<tr><td style="font-size:12px;color:#6b7280">' + (i + 1) + '</td>' +
+      '<td>' + esc(st.message) + '</td><td>' + esc((st.reply || '').slice(0, 220)) + '</td>' +
+      '<td>' + (st.pass ? '<span class="pill llm">pass</span>' : '<span class="pill order">fail</span>') + '</td></tr>';
+  }).join('');
+  var box = document.getElementById('qa-result');
+  box.style.display = 'block';
+  box.innerHTML = '<h3>Result: ' + data.passed + '/' + data.total + ' passed</h3>' +
+    '<table><tr><th>#</th><th>You said</th><th>Bot replied</th><th></th></tr>' + rows + '</table>';
+  box.scrollIntoView();
+}
+function loadQaLabList() { loadQaLab(); }
+function viewQaRun(id) {
+  req('GET', '/api/admin/qa/runs/' + id).then(function (r) {
+    if (r.status >= 400) { alert('Not found'); return; }
+    var run = r.json, results = [];
+    try { results = JSON.parse(run.results || '[]'); } catch (e) {}
+    showQaResult({ results: results, passed: results.filter(function (x) { return x.pass; }).length, total: results.length });
+  });
+}
+function rerunQa(id) {
+  req('POST', '/api/admin/qa/runs/' + id + '/rerun', {}).then(function (r) {
+    if (r.status >= 400) { alert(r.json.error || 'Re-run failed'); return; }
+    showQaResult(r.json);
+    loadQaLab();
+  });
+}
+function delQaRun(id) {
+  if (!confirm('Delete this test run?')) return;
+  req('DELETE', '/api/admin/qa/runs/' + id).then(function () { loadQaLab(); });
+}
+
+/* ---------- A/B tests (proactive nudge experiments) ---------- */
+function loadAbTests() {
+  req('GET', '/api/admin/ab-tests').then(function (r) {
+    var tests = r.json || [];
+    var rows = tests.map(function (t) {
+      var running = t.status === 'running';
+      return '<tr><td><strong>' + esc(t.name) + '</strong><br><span style="font-size:12px;color:#6b7280">' + esc(t.trigger) +
+        ' · split ' + esc(t.split) + '% A</span></td>' +
+        '<td>' + (running ? '<span class="pill llm">running</span>' : '<span class="pill order">paused</span>') + '</td>' +
+        '<td style="color:#6b7280;white-space:nowrap">' + timeAgo(t.created_at) + '</td>' +
+        '<td style="white-space:nowrap"><button class="small" onclick="abStats(' + t.id + ')">Stats</button> ' +
+        '<button class="small ghost" onclick="abToggle(' + t.id + ',' + (running ? 0 : 1) + ')">' + (running ? 'Pause' : 'Resume') + '</button></td></tr>';
+    }).join('');
+    document.getElementById('tab-abtests').innerHTML =
+      '<div class="panel"><h3>Create an A/B test</h3>' +
+      '<p style="color:#6b7280;font-size:13px;margin-bottom:12px">Test two versions of a proactive nudge. Visitors are split 50/50 (or your split) and you can compare impressions and conversions.</p>' +
+      '<label class="lbl">Test name</label><input id="ab-name" placeholder="e.g. Idle nudge wording">' +
+      '<label class="lbl">Trigger</label><select id="ab-trigger"><option value="welcome">welcome — first visit</option><option value="idle_30s">idle_30s — 30s without chatting</option><option value="exit_intent">exit_intent — about to leave</option></select>' +
+      '<label class="lbl">Variant A message</label><textarea id="ab-a" rows="2" maxlength="500" placeholder="Still there? How can I help?"></textarea>' +
+      '<label class="lbl">Variant B message</label><textarea id="ab-b" rows="2" maxlength="500" placeholder="Need a hand? I can help you check out."></textarea>' +
+      '<label class="lbl">Split % for variant A</label><input id="ab-split" type="number" min="1" max="99" value="50" style="max-width:120px">' +
+      '<button onclick="createAb()">Create test</button></div>' +
+      '<div class="panel" id="ab-stats" style="display:none"></div>' +
+      '<div class="panel"><h3>Your tests</h3><table><tr><th>Test</th><th>Status</th><th>Created</th><th></th></tr>' +
+      (rows || '<tr><td colspan="4" style="color:#6b7280">No A/B tests yet.</td></tr>') + '</table></div>';
+  });
+}
+function createAb() {
+  var body = {
+    name: document.getElementById('ab-name').value.trim(),
+    trigger: document.getElementById('ab-trigger').value,
+    variant_a: document.getElementById('ab-a').value.trim(),
+    variant_b: document.getElementById('ab-b').value.trim(),
+    split: parseInt(document.getElementById('ab-split').value, 10) || 50,
+  };
+  if (!body.name || !body.variant_a || !body.variant_b) { alert('Fill in the name and both variants.'); return; }
+  req('POST', '/api/admin/ab-tests', body).then(function (r) {
+    if (r.status >= 400) { alert(r.json.error || 'Failed to create'); return; }
+    loadAbTests();
+  });
+}
+function abToggle(id, run) {
+  req('PUT', '/api/admin/ab-tests/' + id, { status: run ? 'running' : 'paused' }).then(function () { loadAbTests(); });
+}
+function abStats(id) {
+  req('GET', '/api/admin/ab-tests/' + id + '/stats').then(function (r) {
+    var box = document.getElementById('ab-stats');
+    box.style.display = 'block';
+    if (r.status >= 400) { box.innerHTML = '<p style="color:#b91c1c">Stats unavailable.</p>'; return; }
+    var st = r.json || {};
+    function vrow(label, v) {
+      v = v || {};
+      var conv = v.impressions ? Math.round(100 * (v.conversions || 0) / v.impressions) : 0;
+      return '<tr><td><strong>' + label + '</strong></td><td>' + (v.impressions || 0) + '</td><td>' + (v.conversions || 0) + '</td><td>' + conv + '%</td></tr>';
+    }
+    box.innerHTML = '<h3>Stats: ' + esc(st.name || ('Test #' + id)) + '</h3>' +
+      '<table><tr><th>Variant</th><th>Impressions</th><th>Conversions</th><th>Conv. rate</th></tr>' +
+      vrow('A', st.variant_a) + vrow('B', st.variant_b) + '</table>';
+    box.scrollIntoView();
+  });
+}
+
+/* ---------- Articles (help center) ---------- */
+function loadArticles() {
+  req('GET', '/api/admin/articles').then(function (r) {
+    var arts = r.json || [];
+    var rows = arts.map(function (a) {
+      var pub = !!a.published;
+      return '<tr><td><strong>' + esc(a.title) + '</strong></td>' +
+        '<td>' + (pub ? '<span class="pill llm">published</span>' : '<span class="pill order">draft</span>') + '</td>' +
+        '<td style="color:#6b7280;white-space:nowrap">' + timeAgo(a.updated_at || a.created_at) + '</td>' +
+        '<td style="white-space:nowrap"><button class="small" onclick="editArticle(' + a.id + ')">Edit</button> ' +
+        '<button class="small" onclick="pubArticle(' + a.id + ',' + (pub ? 0 : 1) + ')">' + (pub ? 'Unpublish' : 'Publish') + '</button> ' +
+        '<button class="small ghost" onclick="delArticle(' + a.id + ')">Delete</button></td></tr>';
+    }).join('');
+    req('GET', '/api/admin/account').then(function (ar) {
+      var biz = ((ar.json || {}).business_name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      document.getElementById('tab-articles').innerHTML =
+        '<div class="panel"><h3>Help-center articles</h3>' +
+        '<p style="color:#6b7280;font-size:13px;margin-bottom:12px">Published articles appear on your public help page' +
+        (biz ? ' at <a href="/help/' + esc(biz) + '" target="_blank">/help/' + esc(biz) + '</a>' : '') + '.</p>' +
+        '<button onclick="genArticles()">Generate from FAQs</button> ' +
+        '<button class="ghost" onclick="newArticle()">New article</button> ' +
+        '<span class="ok" id="art-ok" style="display:none"></span></div>' +
+        '<div class="panel" id="art-editor" style="display:none"></div>' +
+        '<div class="panel"><h3>All articles</h3><table><tr><th>Title</th><th>Status</th><th>Updated</th><th></th></tr>' +
+        (rows || '<tr><td colspan="4" style="color:#6b7280">No articles yet — generate them from your FAQs.</td></tr>') + '</table></div>';
+    });
+  });
+}
+function genArticles() {
+  var ok = document.getElementById('art-ok');
+  ok.style.display = 'inline'; ok.textContent = 'Generating…';
+  req('POST', '/api/admin/articles/generate', {}).then(function (r) {
+    ok.style.display = 'none';
+    if (r.status >= 400) { alert(r.json.error || 'Generation failed'); return; }
+    loadArticles();
+  });
+}
+function newArticle() {
+  var box = document.getElementById('art-editor');
+  box.style.display = 'block';
+  box.innerHTML = '<h3>New article</h3>' +
+    '<label class="lbl">Title</label><input id="art-title">' +
+    '<label class="lbl">Body (markdown)</label><textarea id="art-body" rows="8"></textarea>' +
+    '<button onclick="saveArticle(0)">Save draft</button> <button class="ghost" onclick="saveArticle(1)">Save &amp; publish</button>';
+  box.scrollIntoView();
+}
+function editArticle(id) {
+  req('GET', '/api/admin/articles/' + id).then(function (r) {
+    if (r.status >= 400) { alert('Not found'); return; }
+    var a = r.json;
+    var box = document.getElementById('art-editor');
+    box.style.display = 'block';
+    box.innerHTML = '<h3>Edit article</h3>' +
+      '<label class="lbl">Title</label><input id="art-title" value="' + esc(a.title) + '">' +
+      '<label class="lbl">Body (markdown)</label><textarea id="art-body" rows="8">' + esc(a.body || '') + '</textarea>' +
+      '<button onclick="saveArticle(' + (a.published ? 1 : 0) + ',' + id + ')">Save</button>';
+    box.scrollIntoView();
+  });
+}
+function saveArticle(publish, id) {
+  var body = { title: document.getElementById('art-title').value.trim(), body: document.getElementById('art-body').value, published: !!publish };
+  if (!body.title) { alert('Add a title first.'); return; }
+  var done = function (r) {
+    if (r.status >= 400) { alert(r.json.error || 'Save failed'); return; }
+    loadArticles();
+  };
+  if (id) req('PUT', '/api/admin/articles/' + id, body).then(done);
+  else req('POST', '/api/admin/articles', body).then(done);
+}
+function pubArticle(id, publish) {
+  req('PUT', '/api/admin/articles/' + id, { published: !!publish }).then(function () { loadArticles(); });
+}
+function delArticle(id) {
+  if (!confirm('Delete this article?')) return;
+  req('DELETE', '/api/admin/articles/' + id).then(function () { loadArticles(); });
 }
 
 /* ---------- Actions (agentic) ---------- */
