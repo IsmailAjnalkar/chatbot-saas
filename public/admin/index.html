@@ -76,8 +76,10 @@
   <div class="err" id="login-err" style="display:none"></div>
   <input id="username" placeholder="Username" autocomplete="username">
   <input id="password" type="password" placeholder="Password" autocomplete="current-password">
+  <div id="login-captcha-slot" style="margin:10px 0"></div>
   <button onclick="doLogin()" style="width:100%">Sign in</button>
 </div>
+<script src="https://js.hcaptcha.com/1/api.js" async defer></script>
 
 <div id="app">
   <header class="app">
@@ -158,11 +160,12 @@ function doLogin() {
   var p = document.getElementById('password').value;
   var e = document.getElementById('login-err');
   e.style.display = 'none';
+  var cap = document.querySelector('#login [name="h-captcha-response"]');
   // NOTE: don't use req() here — it throws on 401 before we can show the error.
   fetch(API + '/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: u, password: p }),}).then(function (r) {
+    body: JSON.stringify({ username: u, password: p, captcha_token: cap ? cap.value : '' }),}).then(function (r) {
     return r.json().catch(function () { return {}; }).then(function (j) { return { status: r.status, json: j }; });}).then(function (r) {
     if (r.status === 429) { e.style.display = 'block'; e.textContent = 'Too many attempts — wait a minute and try again.'; return; }
     if (r.status !== 200) { e.style.display = 'block'; e.textContent = (r.json && r.json.error) || 'Login failed'; return; }
@@ -171,6 +174,16 @@ function doLogin() {
 }
 function doLogout() { req('POST', '/api/auth/logout').then(showLogin); }
 document.getElementById('password').addEventListener('keydown', function (e) { if (e.key === 'Enter') doLogin(); });
+// Render hCaptcha on the login form only when the server has it configured.
+(function () {
+  fetch(API + '/api/public-config').then(function (r) { return r.json(); }).then(function (c) {
+    if (c && c.captcha_sitekey) {
+      var d = document.createElement('div');
+      d.className = 'h-captcha'; d.setAttribute('data-sitekey', c.captcha_sitekey);
+      document.getElementById('login-captcha-slot').appendChild(d);
+    }
+  }).catch(function () {});
+})();
 
 function showTab(name) {
   document.querySelectorAll('nav.tabs button').forEach(function (b) { b.classList.toggle('active', b.dataset.tab === name); });

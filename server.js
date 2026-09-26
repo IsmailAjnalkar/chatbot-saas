@@ -24,6 +24,8 @@ const { createLimiter } = require('./lib/ratelimit');
 const { encryptSecret, encryptionEnabled } = require('./lib/crypto');
 const crawl = require('./lib/crawl');
 const webhooks = require('./lib/webhooks');
+const { isDisposableEmail } = require('./lib/disposable');
+const captcha = require('./lib/captcha');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -164,6 +166,10 @@ function originAllowed(business, req) {
 }
 
 // ---------- public widget config ----------
+app.get('/api/public-config', (req, res) => {
+  // Safe to expose: hCaptcha site keys are public by design.
+  res.json({ captcha_sitekey: captcha.captchaSiteKey() });
+});
 app.get('/api/config', configLimiter, async (req, res) => {
   const business = await db.getBusinessByKey(req.query.key || '');
   if (!business) return res.status(401).json({ error: 'invalid api key' });
@@ -624,6 +630,9 @@ app.post('/api/signup', signupLimiter, async (req, res) => {
   const planChoice = ['starter', 'growth', 'scale'].includes(req.body && req.body.plan) ? req.body.plan : 'starter';
   if (!name || !businessName) return res.status(400).json({ error: 'name and business_name are required' });
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'a valid email is required' });
+  if (isDisposableEmail(email)) return res.status(400).json({ error: 'please use a permanent email address — throwaway domains are not accepted' });
+  const captchaCheck = await captcha.verifyCaptcha(req.body && req.body.captcha_token, req.ip);
+  if (!captchaCheck.ok) return res.status(400).json({ error: captchaCheck.error || 'captcha verification failed' });
   if (website && !/^https?:\/\//i.test(website)) website = 'https://' + website;
   if (website) {
     try {
@@ -660,6 +669,14 @@ app.post('/api/signup', signupLimiter, async (req, res) => {
       })();
     }
     console.log(`[signup] trial business "${businessName}" (${business.id}) for ${email}`);
+        // Email verification: token link emailed; account flagged until clicked.
+    try {
+      const verifyToken = await db.createEmailVerification(business.id, email);
+      const base = `${req.protocol}://${req.get('host')}`;
+      const link = `${base}/api/verify-email?token=${verifyToken}`;
+      await channels.sendEmailText(business, email, `Verify your ${businessName} chatbot account`,
+        `Hi ${name},\n\nPlease verify your email to finish setting up your chatbot account:\n\n${link}\n\nThis link expires in 24 hours. If you didn't sign up, you can ignore this email.`);
+    } catch (e) { console.warn('[signup] verification email failed:', e.message); }
     res.json({ ok: true, token });
   } catch (err) {
     console.error('[signup] failed:', err.message);
@@ -733,8 +750,39 @@ app.post('/api/nudge/trigger', nudgeLimiter, async (req, res) => {
   res.json({ nudge: { id: nudge.id, text, variant }, test_id: test.id });
 });
 
+// Email verification: GET /api/verify-email?token= — single-use, 24h expiry.
+app.get('/api/verify-email', async (req, res) => {
+  const result = await db.consumeEmailVerification(req.query.token || '');
+  if (!result) return res.status(400).send('This verification link is invalid or has expired.');
+  const business = await db.getBusinessById(result.business_id);
+  if (business) {
+    const settings = { ...(business.settings || {}), email_verified: true, email_verified_at: Date.now() };
+    await db.updateBusinessSettings(business.id, settings);
+  }
+  res.send('<!doctype html><html><body style="font-family:system-ui;max-width:560px;margin:4rem auto;text-align:center"><h1>Email verified</h1><p>Your account email is confirmed. You can now log in to your admin dashboard.</p></body></html>');
+});
+// Resend the verification email (admin must be logged in).
+app.post('/api/admin/verify-email/resend', async (req, res) => {
+  if (!req.session.admin) return res.status(401).json({ error: 'not logged in' });
+  const business = await db.getBusinessById(req.session.admin.business_id);
+  if (!business) return res.status(404).json({ error: 'business not found' });
+  const email = (business.settings && (business.settings.contact_email || business.settings.support_email)) || '';
+  if (!email) return res.status(400).json({ error: 'no contact email on file' });
+  try {
+    const verifyToken = await db.createEmailVerification(business.id, email);
+    const base = `${req.protocol}://${req.get('host')}`;
+    await channels.sendEmailText(business, email, 'Verify your chatbot account',
+      `Please verify your email:\n\n${base}/api/verify-email?token=${verifyToken}\n\nThis link expires in 24 hours.`);
+    res.json({ ok: true, email_configured: channels.emailConfigured() });
+  } catch (e) {
+    res.status(500).json({ error: 'could not send verification email' });
+  }
+});
+
 // ---------- auth ----------
 app.post('/api/auth/login', loginLimiter, async (req, res) => {
+  const loginCaptcha = await captcha.verifyCaptcha(req.body && req.body.captcha_token, req.ip);
+  if (!loginCaptcha.ok) return res.status(400).json({ error: loginCaptcha.error || 'captcha verification failed' });
   const { username, password } = req.body || {};
   const admin = await db.findAdmin((username || '').trim());
   if (!admin || !db.verifyPassword(password || '', admin.password_hash)) {
@@ -1118,7 +1166,8 @@ admin.get('/qa/runs/:id', async (req, res) => {
   res.json(run);
 });
 admin.delete('/qa/runs/:id', async (req, res) => {
-  await db.deleteQaRun(req.params.id, req.businessId);
+  const deleted = await db.deleteQaRun(req.params.id, req.businessId);
+  if (!deleted) return res.status(404).json({ error: 'not found' });
   res.json({ ok: true });
 });
 // Re-run a saved regression script against the current bot.
@@ -1236,6 +1285,9 @@ admin.get('/account', async (req, res) => {
     trial_plan: s.trial_plan || null,
     trial_days_left: s.plan === 'trial' ? Math.max(0, Math.ceil((trialEnds - Date.now()) / 864e5)) : null,
     billing_configured: billingConfigured(),
+    email_verified: !!s.email_verified,
+    email_configured: channels.emailConfigured(),
+    captcha_configured: captcha.captchaConfigured(),
   });
 });
 
@@ -1415,6 +1467,34 @@ app.get('/api/health', async (req, res) => {
     dbOk = true;
   } catch {}
   res.status(dbOk ? 200 : 503).json({ ok: dbOk, time: new Date().toISOString() });
+});
+
+// Public status page: service health + subsystem checks (no secrets exposed).
+app.get('/status', async (req, res) => {
+  let dbOk = false, dbBackend = 'unknown';
+  try { await db.ping(); dbOk = true; dbBackend = process.env.DATABASE_URL ? 'postgres' : 'sqlite'; } catch {}
+  const checks = [
+    { name: 'API', ok: true },
+    { name: 'Database', ok: dbOk, detail: dbBackend },
+    { name: 'WhatsApp channel', ok: channels.whatsappConfigured() },
+    { name: 'Messenger channel', ok: channels.messengerConfigured() },
+    { name: 'Billing (Stripe)', ok: billingConfigured() },
+    { name: 'Email sending', ok: channels.emailConfigured() },
+    { name: 'CAPTCHA', ok: captcha.captchaConfigured() },
+  ];
+  const allOk = dbOk;
+  const uptimeMin = Math.floor(process.uptime() / 60);
+  const row = (c) => `<tr><td>${c.name}</td><td>${c.ok ? '✅ Operational' : '⚪ Not configured'}</td><td>${c.detail || ''}</td></tr>`;
+  if ((req.query.format || '') === 'json') return res.json({ ok: allOk, uptime_min: uptimeMin, checks });
+  res.status(allOk ? 200 : 503).send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Status — ChatbotReply</title>
+<style>body{font-family:system-ui,sans-serif;max-width:640px;margin:2rem auto;padding:0 1rem;line-height:1.6}
+.banner{padding:1rem;border-radius:8px;background:${allOk ? '#e6f7e6' : '#fde8e8'};font-weight:600}
+table{width:100%;border-collapse:collapse;margin-top:1rem}td{padding:.5rem;border-bottom:1px solid #eee}</style></head>
+<body><h1>ChatbotReply status</h1>
+<div class="banner">${allOk ? 'All core systems operational' : 'Core system issue detected'}</div>
+<table>${checks.map(row).join('')}</table>
+<p>Uptime: ${uptimeMin} min · <a href="/status?format=json">JSON</a></p></body></html>`);
 });
 
 // ---------- static frontends ----------

@@ -40,21 +40,32 @@
       <option value="scale">Scale — $399/mo after trial</option>
     </select>
     <button id="go" type="submit">Create my chatbot →</button>
+    <div id="captcha-slot" style="margin:12px 0"></div>
     <div class="err" id="err"></div>
   </form>
   <p class="fine">Free for 14 days · Cancel anytime · No card required</p>
   <a class="back" href="/pricing/">← Compare plans</a>
 </div>
+<script src="https://js.hcaptcha.com/1/api.js" async defer></script>
 <script>
 (function () {
   var q = new URLSearchParams(window.location.search).get('plan');
   if (['starter', 'growth', 'scale'].indexOf(q) >= 0) document.getElementById('plan').value = q;
+  // Render hCaptcha only when the server has it configured.
+  fetch('/api/public-config').then(function (r) { return r.json(); }).then(function (c) {
+    if (c && c.captcha_sitekey) {
+      var d = document.createElement('div');
+      d.className = 'h-captcha'; d.setAttribute('data-sitekey', c.captcha_sitekey);
+      document.getElementById('captcha-slot').appendChild(d);
+    }
+  }).catch(function () {});
 })();
 document.getElementById('f').addEventListener('submit', async function (e) {
   e.preventDefault();
   var go = document.getElementById('go'), err = document.getElementById('err');
   err.style.display = 'none'; go.disabled = true; go.textContent = 'Creating your chatbot…';
   try {
+    var cap = document.querySelector('[name="h-captcha-response"]');
     var r = await fetch('/api/signup', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -62,7 +73,8 @@ document.getElementById('f').addEventListener('submit', async function (e) {
         email: document.getElementById('email').value,
         business_name: document.getElementById('biz').value,
         website: document.getElementById('site').value,
-        plan: document.getElementById('plan').value
+        plan: document.getElementById('plan').value,
+        captcha_token: cap ? cap.value : ''
       })
     });
     var j = await r.json();
