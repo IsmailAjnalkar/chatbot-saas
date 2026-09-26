@@ -162,12 +162,74 @@ function loadFaqs() {
         '<td><div class="row-actions"><button class="small ghost" onclick="editFaq(' + f.id + ')">Edit</button><button class="small danger" onclick="delFaq(' + f.id + ')">Delete</button></div></td></tr>';
     }).join('');
     document.getElementById('tab-faqs').innerHTML =
+      '<div class="panel"><h3>Import from website</h3>' +
+      '<p style="color:#6b7280;font-size:13px;margin-bottom:12px">Crawls a website (same domain only) and adds its pages to the knowledge base. Runs in the background — you can keep working; new documents appear below automatically.</p>' +
+      '<div class="grid2"><div><label class="lbl">Website URL</label><input id="crawl-url" placeholder="https://example.com"></div>' +
+      '<div><label class="lbl">Max pages</label><input id="crawl-max" type="number" value="20" min="1" max="100"></div></div>' +
+      '<button onclick="startCrawl()">Start crawl</button> <span class="ok" id="crawl-ok" style="display:none"></span></div>' +
+      '<div class="panel"><h3>Crawled documents</h3><div id="doc-list"><p style="color:#6b7280">Loading…</p></div></div>' +
       '<div class="panel"><h3>Knowledge base <span style="color:#6b7280;font-weight:400;font-size:13px">(' + r.json.length + ' entries)</span></h3>' +
       '<p style="color:#6b7280;font-size:13px;margin-bottom:12px">The bot matches visitor questions against these using TF-IDF similarity. Add keywords (comma-separated synonyms) to improve matching.</p>' +
       '<button onclick="editFaq(null)">+ Add FAQ</button></div>' +
       '<div class="panel"><table><tr><th>Question / Answer</th><th style="width:150px">Actions</th></tr>' + (rows || '<tr><td colspan="2" style="color:#6b7280">No FAQs yet — add your first one above.</td></tr>') + '</table></div>';
     window._faqs = r.json;
+    loadDocuments();
+    maybePollDocuments();
   });
+}
+/* ---------- Crawled documents ---------- */
+function startCrawl() {
+  var url = document.getElementById('crawl-url').value.trim();
+  var max = parseInt(document.getElementById('crawl-max').value, 10) || 20;
+  if (!url) { alert('Enter a website URL.'); return; }
+  req('POST', '/api/admin/crawl', { url: url, max_pages: max }).then(function (r) {
+    var ok = document.getElementById('crawl-ok');
+    if (r.status >= 400 || !r.json.started) { alert(r.json.error || 'Crawl failed to start'); return; }
+    ok.style.display = 'inline';
+    ok.textContent = 'Crawl started — documents will appear below as they are imported.';
+    window._crawlStartedAt = Date.now();
+    maybePollDocuments();
+    setTimeout(function () { ok.style.display = 'none'; }, 8000);
+  });
+}
+function loadDocuments() {
+  var box = document.getElementById('doc-list');
+  if (!box) return;
+  req('GET', '/api/admin/documents').then(function (r) {
+    var docs = r.json || [];
+    if (!docs.length) { box.innerHTML = '<p style="color:#6b7280">No crawled documents yet — import a website above.</p>'; return; }
+    // Group by source URL for a compact list.
+    var groups = {};
+    docs.forEach(function (d) {
+      var g = groups[d.source_url] || (groups[d.source_url] = { url: d.source_url, title: d.title, ids: [], qa: 0, chunks: 0 });
+      g.ids.push(d.id);
+      if (d.question) g.qa++; else g.chunks++;
+    });
+    var rows = Object.keys(groups).map(function (u) {
+      var g = groups[u];
+      var what = g.qa ? (g.qa + ' Q/A pair' + (g.qa === 1 ? '' : 's')) : (g.chunks + ' chunk' + (g.chunks === 1 ? '' : 's'));
+      return '<tr><td><strong>' + esc(g.title || g.url) + '</strong><br><span style="color:#6b7280;font-size:12px">' + esc(g.url) + '</span><br><span style="color:#9ca3af;font-size:12px">' + what + '</span></td>' +
+        '<td style="width:120px"><button class="small danger" onclick="delDocGroup(' + JSON.stringify(g.ids) + ')">Delete</button></td></tr>';
+    }).join('');
+    box.innerHTML = '<table><tr><th>Source</th><th style="width:120px"></th></tr>' + rows + '</table>';
+  }).catch(function () { box.innerHTML = '<p class="err">Could not load documents.</p>'; });
+}
+function delDocGroup(ids) {
+  if (!confirm('Delete these ' + ids.length + ' imported document(s)?')) return;
+  (function next(i) {
+    if (i >= ids.length) { loadDocuments(); return; }
+    req('DELETE', '/api/admin/documents/' + ids[i]).then(function () { next(i + 1); });
+  })(0);
+}
+// While a crawl started in the last 2 minutes, refresh the documents list every 5s.
+function maybePollDocuments() {
+  if (window._docPoll) return;
+  window._docPoll = setInterval(function () {
+    if (!window._crawlStartedAt || Date.now() - window._crawlStartedAt > 120000) {
+      clearInterval(window._docPoll); window._docPoll = null; return;
+    }
+    if (document.getElementById('doc-list')) loadDocuments();
+  }, 5000);
 }
 function editFaq(id) {
   var f = id ? window._faqs.find(function (x) { return x.id === id; }) : { question: '', answer: '', keywords: '' };
@@ -283,6 +345,11 @@ function loadSettings() {
       '<div class="grid2"><div><label class="lbl">Brand color</label><input id="s-brand_color" value="' + esc(s.brand_color || '#4f46e5') + '"></div>' +
       '<div><label class="lbl">Support email</label><input id="s-support_email" value="' + esc(s.support_email || '').replace(/"/g, '&quot;') + '"></div></div>' +
       '<div class="check"><input type="checkbox" id="s-lead_capture_enabled" ' + (s.lead_capture_enabled !== false ? 'checked' : '') + '> Enable automatic lead capture when the bot can\'t answer</div>' +
+      '<div class="grid2"><div><label class="lbl">Default language</label><select id="s-default_language">' +
+      [['en', 'English'], ['es', 'Español'], ['fr', 'Français'], ['de', 'Deutsch'], ['pt', 'Português'], ['hi', 'हिन्दी'], ['ar', 'العربية']].map(function (l) {
+        return '<option value="' + l[0] + '"' + ((s.default_language || 'en') === l[0] ? ' selected' : '') + '>' + l[1] + '</option>';
+      }).join('') + '</select></div></div>' +
+      '<div class="check"><input type="checkbox" id="s-auto_translate" ' + (s.auto_translate ? 'checked' : '') + '> Auto-translate replies to the visitor\'s language (needs LLM)</div>' +
       '<label class="lbl">Allowed origins (widget security)</label><textarea id="s-allowed_origins" rows="2" placeholder="https://shop.example.com, https://www.example.com">' + esc(s.allowed_origins || '') + '</textarea>' +
       '<p style="color:#9ca3af;font-size:12px;margin-bottom:12px">Domains allowed to load the widget (comma or line separated). Supports <code>https://*.example.com</code>. Leave empty only for development.</p>' +
       '<button onclick="saveSettings()">Save settings</button> <span class="ok" id="s-ok" style="display:none">Saved ✓</span></div>' +
@@ -316,6 +383,7 @@ function saveSettings() {
     name: v('s-name'), bot_name: v('s-bot_name'), welcome_message: v('s-welcome_message'),
     brand_color: v('s-brand_color'), support_email: v('s-support_email'),
     lead_capture_enabled: v('s-lead_capture_enabled'), allowed_origins: v('s-allowed_origins'),
+    default_language: v('s-default_language'), auto_translate: v('s-auto_translate'),
     llm_enabled: v('s-llm_enabled'), llm_base_url: v('s-llm_base_url'), llm_model: v('s-llm_model'),
   };
   var k = v('s-llm_api_key');

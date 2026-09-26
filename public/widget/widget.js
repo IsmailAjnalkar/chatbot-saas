@@ -6,7 +6,9 @@
  *           data-api-key="cb_..."
  *           data-api-url="https://YOUR-HOST"></script>
  *
- * Optional: data-position="bottom-right|bottom-left", data-z-index="9999"
+ * Optional: data-position="bottom-right|bottom-left", data-z-index="9999",
+ *            data-lang="es" (UI language override; defaults to the business's
+ *            default_language, then the browser language)
  */
 (function () {
   'use strict';
@@ -16,16 +18,30 @@
   var API_KEY = me.getAttribute('data-api-key') || '';
   var API_URL = (me.getAttribute('data-api-url') || '').replace(/\/$/, '');
   var POSITION = me.getAttribute('data-position') || 'bottom-right';
+  var LANG_ATTR = (me.getAttribute('data-lang') || '').toLowerCase().slice(0, 2);
 
   if (!API_KEY || !API_URL) {
     console.error('[chat-widget] missing data-api-key or data-api-url');
     return;
   }
 
+  // UI strings for the widget chrome (bot replies are translated server-side).
+  var STRINGS = {
+    en: { placeholder: 'Type a message…', inputAria: 'Type your message', sendAria: 'Send', openChat: 'Open chat', closeChat: 'Close chat', subtitle: 'Typically replies instantly', error: 'Sorry, something went wrong. Please try again in a moment.' },
+    es: { placeholder: 'Escribe un mensaje…', inputAria: 'Escribe tu mensaje', sendAria: 'Enviar', openChat: 'Abrir chat', closeChat: 'Cerrar chat', subtitle: 'Suele responder al instante', error: 'Lo sentimos, algo salió mal. Inténtalo de nuevo en un momento.' },
+    fr: { placeholder: 'Écrivez un message…', inputAria: 'Écrivez votre message', sendAria: 'Envoyer', openChat: 'Ouvrir le chat', closeChat: 'Fermer le chat', subtitle: 'Répond généralement instantanément', error: 'Désolé, une erreur est survenue. Veuillez réessayer dans un instant.' },
+    de: { placeholder: 'Nachricht eingeben…', inputAria: 'Nachricht eingeben', sendAria: 'Senden', openChat: 'Chat öffnen', closeChat: 'Chat schließen', subtitle: 'Antwortet in der Regel sofort', error: 'Entschuldigung, etwas ist schiefgelaufen. Bitte versuchen Sie es gleich erneut.' },
+    pt: { placeholder: 'Digite uma mensagem…', inputAria: 'Digite sua mensagem', sendAria: 'Enviar', openChat: 'Abrir bate-papo', closeChat: 'Fechar bate-papo', subtitle: 'Normalmente responde na hora', error: 'Desculpe, algo deu errado. Tente novamente em instantes.' },
+    hi: { placeholder: 'संदेश लिखें…', inputAria: 'अपना संदेश लिखें', sendAria: 'भेजें', openChat: 'चैट खोलें', closeChat: 'चैट बंद करें', subtitle: 'आमतौर पर तुरंत जवाब देता है', error: 'माफ़ करें, कुछ गड़बड़ हो गई। कृपया थोड़ी देर में पुनः प्रयास करें।' },
+    ar: { placeholder: 'اكتب رسالة…', inputAria: 'اكتب رسالتك', sendAria: 'إرسال', openChat: 'فتح الدردشة', closeChat: 'إغلاق الدردشة', subtitle: 'يرد عادةً على الفور', error: 'عذرًا، حدث خطأ ما. يرجى المحاولة مرة أخرى بعد قليل.' },
+  };
+  var RTL_LANGS = { ar: true };
+
   var sessionId = null;
   try { sessionId = localStorage.getItem('cb_session_' + API_KEY); } catch (e) {}
 
-  var cfg = { business_name: 'Support', welcome_message: 'Hi! How can I help?', brand_color: '#4f46e5', bot_name: 'Assistant' };
+  var cfg = { business_name: 'Support', welcome_message: 'Hi! How can I help?', brand_color: '#4f46e5', bot_name: 'Assistant', default_language: 'en' };
+  var T = STRINGS.en; // resolved UI strings (set once config arrives)
 
   function el(tag, cls, html) {
     var d = document.createElement(tag);
@@ -48,18 +64,19 @@
     // container
     var root = el('div', 'cbw-root cbw-' + POSITION);
     root.style.setProperty('--cbw-brand', cfg.brand_color);
+    if (RTL_LANGS[T.lang]) root.setAttribute('dir', 'rtl');
 
     // launcher button
     var launcher = el('button', 'cbw-launcher', '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>');
-    launcher.setAttribute('aria-label', 'Open chat');
+    launcher.setAttribute('aria-label', T.openChat);
 
     // panel
     var panel = el('div', 'cbw-panel cbw-hidden');
 
     var header = el('div', 'cbw-header',
       '<div class="cbw-avatar">' + esc(cfg.business_name.charAt(0).toUpperCase()) + '</div>' +
-      '<div class="cbw-title"><strong>' + esc(cfg.bot_name) + '</strong><span>Typically replies instantly</span></div>' +
-      '<button class="cbw-close" aria-label="Close chat">&times;</button>');
+      '<div class="cbw-title"><strong>' + esc(cfg.bot_name) + '</strong><span>' + esc(T.subtitle) + '</span></div>' +
+      '<button class="cbw-close" aria-label="' + esc(T.closeChat) + '">&times;</button>');
 
     var body = el('div', 'cbw-body');
 
@@ -67,10 +84,10 @@
 
     var footer = el('div', 'cbw-footer');
     var input = el('input', 'cbw-input');
-    input.placeholder = 'Type your message...';
-    input.setAttribute('aria-label', 'Type your message');
+    input.placeholder = T.placeholder;
+    input.setAttribute('aria-label', T.inputAria);
     var send = el('button', 'cbw-send', '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>');
-    send.setAttribute('aria-label', 'Send');
+    send.setAttribute('aria-label', T.sendAria);
 
     footer.appendChild(input);
     footer.appendChild(send);
@@ -191,7 +208,7 @@
       }).catch(function () {
         typing(false);
         busy = false;
-        addMsg('bot', 'Sorry, something went wrong. Please try again in a moment.');
+        addMsg('bot', esc(T.error));
       });
     }
 
@@ -209,6 +226,17 @@
     return { sendMessage: sendMessage };
   }
 
+  // Resolve the UI language: data-lang attr wins, then the business's
+  // default_language from /api/config, then the browser language.
+  function resolveLang() {
+    var nav = '';
+    try { nav = (navigator.language || navigator.userLanguage || 'en').toLowerCase().slice(0, 2); } catch (e) { nav = 'en'; }
+    var code = LANG_ATTR || (cfg.default_language || '').toLowerCase().slice(0, 2) || nav || 'en';
+    if (!STRINGS[code]) code = 'en';
+    T = STRINGS[code];
+    T.lang = code;
+  }
+
   // load CSS then config then build
   var link = document.createElement('link');
   link.rel = 'stylesheet';
@@ -217,6 +245,6 @@
 
   fetch(API_URL + '/api/config?key=' + encodeURIComponent(API_KEY))
     .then(function (r) { return r.json(); })
-    .then(function (c) { if (!c.error) cfg = Object.assign(cfg, c); build(); })
-    .catch(function () { build(); }); // still build with defaults if config fails
+    .then(function (c) { if (!c.error) cfg = Object.assign(cfg, c); resolveLang(); build(); })
+    .catch(function () { resolveLang(); build(); }); // still build with defaults if config fails
 })();

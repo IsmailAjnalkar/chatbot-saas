@@ -19,6 +19,7 @@ const db = require('./lib/db');
 const { processMessage } = require('./lib/bot');
 const { createLimiter } = require('./lib/ratelimit');
 const { encryptSecret, encryptionEnabled } = require('./lib/crypto');
+const crawl = require('./lib/crawl');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -107,8 +108,8 @@ function originAllowed(business, req) {
 }
 
 // ---------- public widget config ----------
-app.get('/api/config', configLimiter, (req, res) => {
-  const business = db.getBusinessByKey(req.query.key || '');
+app.get('/api/config', configLimiter, async (req, res) => {
+  const business = await db.getBusinessByKey(req.query.key || '');
   if (!business) return res.status(401).json({ error: 'invalid api key' });
   if (!originAllowed(business, req)) return res.status(403).json({ error: 'origin not allowed for this widget' });
   const s = business.settings;
@@ -119,13 +120,14 @@ app.get('/api/config', configLimiter, (req, res) => {
     brand_color: s.brand_color || '#4f46e5',
     support_email: s.support_email || '',
     bot_name: s.bot_name || `${business.name} Assistant`,
+    default_language: s.default_language || 'en',
   });
 });
 
 // Throws {status:401} on bad key; routes below own the single response.
 async function handleChat(req) {
   const { api_key, session_id, message, visitor_label } = req.body || {};
-  const business = db.getBusinessByKey(api_key || '');
+  const business = await db.getBusinessByKey(api_key || '');
   if (!business) {
     const err = new Error('invalid api key');
     err.status = 401;
@@ -179,16 +181,16 @@ app.post('/api/chat/stream', chatLimiter, async (req, res) => {
 //                                        provision/seed and regenerable in admin)
 //   Body: { "orders": [ {order_number, status, eta?, carrier?, tracking_number?, items?} ] }
 // Upserts orders so the bot's tracking answers stay live. See README for details.
-app.post('/api/webhook/orders', webhookLimiter, (req, res) => {
+app.post('/api/webhook/orders', webhookLimiter, async (req, res) => {
   const secret = req.get('X-Webhook-Secret') || (req.body && req.body.webhook_secret) || '';
-  const business = db.getBusinessByWebhookSecret(secret);
+  const business = await db.getBusinessByWebhookSecret(secret);
   if (!business) return res.status(401).json({ error: 'invalid webhook secret' });
   const { orders } = req.body || {};
   if (!Array.isArray(orders)) return res.status(400).json({ error: 'orders must be an array' });
   const saved = [];
   for (const o of orders.slice(0, 500)) {
     if (!o || !o.order_number || !o.status) continue;
-    saved.push(db.upsertOrder(business.id, {
+    saved.push(await db.upsertOrder(business.id, {
       order_number: String(o.order_number).toUpperCase(),
       status: String(o.status), eta: o.eta || '', carrier: o.carrier || '',
       tracking_number: o.tracking_number || '', items: o.items || '',
@@ -198,22 +200,22 @@ app.post('/api/webhook/orders', webhookLimiter, (req, res) => {
 });
 
 // ---------- auth ----------
-app.post('/api/auth/login', loginLimiter, (req, res) => {
+app.post('/api/auth/login', loginLimiter, async (req, res) => {
   const { username, password } = req.body || {};
-  const admin = db.findAdmin((username || '').trim());
+  const admin = await db.findAdmin((username || '').trim());
   if (!admin || !db.verifyPassword(password || '', admin.password_hash)) {
     return res.status(401).json({ error: 'invalid username or password' });
   }
-  const business = db.getBusinessById(admin.business_id);
+  const business = await db.getBusinessById(admin.business_id);
   req.session.admin = { username: admin.username, business_id: admin.business_id };
   res.json({ ok: true, username: admin.username, business: { id: business.id, name: business.name } });
 });
 app.post('/api/auth/logout', (req, res) => {
   req.session.destroy(() => res.json({ ok: true }));
 });
-app.get('/api/auth/me', (req, res) => {
+app.get('/api/auth/me', async (req, res) => {
   if (!req.session.admin) return res.status(401).json({ error: 'not logged in' });
-  const business = db.getBusinessById(req.session.admin.business_id);
+  const business = await db.getBusinessById(req.session.admin.business_id);
   res.json({ username: req.session.admin.username, business: { id: business.id, name: business.name } });
 });
 
@@ -226,25 +228,60 @@ const admin = express.Router();
 admin.use(requireAuth);
 
 // FAQs
-admin.get('/faqs', (req, res) => res.json(db.listFaqs(req.businessId)));
-admin.post('/faqs', (req, res) => {
+admin.get('/faqs', async (req, res) => res.json(await db.listFaqs(req.businessId)));
+admin.post('/faqs', async (req, res) => {
   const { question, answer, keywords } = req.body || {};
   if (!question || !answer) return res.status(400).json({ error: 'question and answer required' });
-  res.status(201).json(db.addFaq(req.businessId, question, answer, keywords || ''));
+  res.status(201).json(await db.addFaq(req.businessId, question, answer, keywords || ''));
 });
-admin.put('/faqs/:id', (req, res) => {
+admin.put('/faqs/:id', async (req, res) => {
   const { question, answer, keywords } = req.body || {};
   if (!question || !answer) return res.status(400).json({ error: 'question and answer required' });
-  res.json(db.updateFaq(req.params.id, req.businessId, { question, answer, keywords }));
+  res.json(await db.updateFaq(req.params.id, req.businessId, { question, answer, keywords }));
 });
-admin.delete('/faqs/:id', (req, res) => {
-  db.deleteFaq(req.params.id, req.businessId);
+admin.delete('/faqs/:id', async (req, res) => {
+  await db.deleteFaq(req.params.id, req.businessId);
+  res.json({ ok: true });
+});
+
+// Website crawl -> knowledge ingestion (runs in the background)
+admin.post('/crawl', async (req, res) => {
+  const { url, max_pages } = req.body || {};
+  let parsed;
+  try {
+    parsed = new URL(String(url || '').trim());
+  } catch {
+    return res.status(400).json({ error: 'invalid URL' });
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    return res.status(400).json({ error: 'URL must start with http:// or https://' });
+  }
+  const maxPages = Math.min(Math.max(parseInt(max_pages, 10) || 20, 1), 100);
+  const business = await db.getBusinessById(req.businessId);
+  // Background job — not awaited; errors are logged, progress is visible
+  // by polling GET /api/admin/documents.
+  (async () => {
+    try {
+      const pages = await crawl.crawlSite(parsed.toString(), { maxPages });
+      const stored = await crawl.ingestPages(business, pages);
+      console.log(`[crawl] business ${business.id}: ${pages.length} pages crawled, ${stored} documents stored`);
+    } catch (err) {
+      console.error('[crawl] failed:', err.message);
+    }
+  })();
+  res.json({ ok: true, started: true });
+});
+
+// Crawled documents
+admin.get('/documents', async (req, res) => res.json(await db.listDocuments(req.businessId)));
+admin.delete('/documents/:id', async (req, res) => {
+  await db.deleteDocument(req.params.id, req.businessId);
   res.json({ ok: true });
 });
 
 // Settings (secrets are never returned in full — see flags below)
-admin.get('/settings', (req, res) => {
-  const b = db.getBusinessById(req.businessId);
+admin.get('/settings', async (req, res) => {
+  const b = await db.getBusinessById(req.businessId);
   const s = { ...b.settings };
   const llmKeySet = !!(s.llm_api_key || s.llm_api_key_enc);
   delete s.llm_api_key;
@@ -256,10 +293,11 @@ admin.get('/settings', (req, res) => {
     webhook_secret_set: !!b.webhook_secret_hash,
   });
 });
-admin.put('/settings', (req, res) => {
+admin.put('/settings', async (req, res) => {
   const allowed = ['welcome_message', 'brand_color', 'support_email', 'bot_name',
-    'lead_capture_enabled', 'llm_enabled', 'llm_base_url', 'llm_model', 'allowed_origins'];
-  const b = db.getBusinessById(req.businessId);
+    'lead_capture_enabled', 'llm_enabled', 'llm_base_url', 'llm_model', 'allowed_origins',
+    'default_language', 'auto_translate'];
+  const b = await db.getBusinessById(req.businessId);
   const next = { ...b.settings };
   for (const k of allowed) if (req.body[k] !== undefined) next[k] = req.body[k];
   // LLM API key is stored AES-256-GCM-encrypted, never in plaintext.
@@ -276,18 +314,18 @@ admin.put('/settings', (req, res) => {
       delete next.llm_api_key;
     }
   }
-  if (req.body.name) db.db.prepare('UPDATE businesses SET name = ? WHERE id = ?').run(req.body.name, req.businessId);
-  db.updateBusinessSettings(req.businessId, next);
+  if (req.body.name) await db.updateBusinessName(req.businessId, req.body.name);
+  await db.updateBusinessSettings(req.businessId, next);
   res.json({ ok: true });
 });
 
 // Webhook secret management — plaintext is shown ONCE, only here.
-admin.get('/webhook', (req, res) => {
-  const b = db.getBusinessById(req.businessId);
+admin.get('/webhook', async (req, res) => {
+  const b = await db.getBusinessById(req.businessId);
   res.json({ webhook_secret_set: !!b.webhook_secret_hash });
 });
-admin.post('/webhook/regenerate', (req, res) => {
-  const secret = db.regenerateWebhookSecret(req.businessId);
+admin.post('/webhook/regenerate', async (req, res) => {
+  const secret = await db.regenerateWebhookSecret(req.businessId);
   res.json({
     webhook_secret: secret,
     warning: 'Shown once — copy it now. Your store must send it as the X-Webhook-Secret header to POST /api/webhook/orders.',
@@ -301,8 +339,8 @@ function leadsToCsv(leads) {
     ...leads.map(l => [l.id, new Date(l.created_at).toISOString(), l.kind, l.name, l.email, l.phone, l.note, l.session_id || ''])];
   return rows.map(r => r.map(esc).join(',')).join('\n');
 }
-admin.get('/leads', (req, res) => {
-  const leads = db.listLeads(req.businessId);
+admin.get('/leads', async (req, res) => {
+  const leads = await db.listLeads(req.businessId);
   if (req.query.format === 'csv') {
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="leads.csv"');
@@ -312,72 +350,71 @@ admin.get('/leads', (req, res) => {
 });
 
 // Sessions / transcripts
-admin.get('/sessions', (req, res) => {
-  res.json(db.listSessions(req.businessId, { flaggedOnly: req.query.flagged === '1' }));
+admin.get('/sessions', async (req, res) => {
+  res.json(await db.listSessions(req.businessId, { flaggedOnly: req.query.flagged === '1' }));
 });
-admin.get('/sessions/:id', (req, res) => {
-  const s = db.getSession(req.params.id);
+admin.get('/sessions/:id', async (req, res) => {
+  const s = await db.getSession(req.params.id);
   if (!s || s.business_id !== req.businessId) return res.status(404).json({ error: 'not found' });
-  res.json({ session: s, messages: db.getHistory(req.params.id, 200) });
+  res.json({ session: s, messages: await db.getHistory(req.params.id, 200) });
 });
-admin.post('/sessions/:id/resolve', (req, res) => {
-  const s = db.getSession(req.params.id);
+admin.post('/sessions/:id/resolve', async (req, res) => {
+  const s = await db.getSession(req.params.id);
   if (!s || s.business_id !== req.businessId) return res.status(404).json({ error: 'not found' });
-  db.updateSession(req.params.id, { flagged_human: 0, resolved: 1 });
+  await db.updateSession(req.params.id, { flagged_human: 0, resolved: 1 });
   res.json({ ok: true });
 });
 
 // Orders (mock store management)
-admin.get('/orders', (req, res) => res.json(db.listOrders(req.businessId)));
-admin.post('/orders', (req, res) => {
+admin.get('/orders', async (req, res) => res.json(await db.listOrders(req.businessId)));
+admin.post('/orders', async (req, res) => {
   const { order_number, status, eta, carrier, tracking_number, items } = req.body || {};
   if (!order_number || !status) return res.status(400).json({ error: 'order_number and status required' });
-  res.status(201).json(db.upsertOrder(req.businessId, {
+  res.status(201).json(await db.upsertOrder(req.businessId, {
     order_number: String(order_number).toUpperCase(), status, eta, carrier, tracking_number, items,
   }));
 });
-admin.delete('/orders/:id', (req, res) => {
-  db.deleteOrder(req.params.id, req.businessId);
+admin.delete('/orders/:id', async (req, res) => {
+  await db.deleteOrder(req.params.id, req.businessId);
   res.json({ ok: true });
 });
 
 // Analytics
-admin.get('/analytics', (req, res) => {
+admin.get('/analytics', async (req, res) => {
   const biz = req.businessId;
   res.json({
-    chats_per_day: db.chatsPerDay(biz, 14),
-    top_unanswered: db.topUnanswered(biz, 10),
-    leads_30d: db.leadCount(biz, 30),
-    resolution: db.resolutionStats(biz, 30),
+    chats_per_day: await db.chatsPerDay(biz, 14),
+    top_unanswered: await db.topUnanswered(biz, 10),
+    leads_30d: await db.leadCount(biz, 30),
+    resolution: await db.resolutionStats(biz, 30),
   });
 });
 
 // API key (public widget key — safe to display; it's embedded in client sites)
-admin.get('/api-key', (req, res) => {
-  const b = db.getBusinessById(req.businessId);
+admin.get('/api-key', async (req, res) => {
+  const b = await db.getBusinessById(req.businessId);
   res.json({ api_key: b.api_key });
 });
 
 // Change own password
-admin.post('/change-password', (req, res) => {
+admin.post('/change-password', async (req, res) => {
   const { current_password, new_password } = req.body || {};
-  const adminRow = db.findAdmin(req.session.admin.username);
+  const adminRow = await db.findAdmin(req.session.admin.username);
   if (!adminRow || !db.verifyPassword(current_password || '', adminRow.password_hash))
     return res.status(401).json({ error: 'current password incorrect' });
   if (!new_password || new_password.length < 8)
     return res.status(400).json({ error: 'new password must be at least 8 characters' });
-  db.db.prepare('UPDATE admins SET password_hash = ? WHERE id = ?')
-    .run(db.hashPassword(new_password), adminRow.id);
+  await db.updateAdminPassword(adminRow.id, new_password);
   res.json({ ok: true });
 });
 
 app.use('/api/admin', admin);
 
 // ---------- health check (for hosting platforms) ----------
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
   let dbOk = false;
   try {
-    db.db.prepare('SELECT 1').get();
+    await db.ping();
     dbOk = true;
   } catch {}
   res.status(dbOk ? 200 : 503).json({ ok: dbOk, time: new Date().toISOString() });
@@ -398,7 +435,8 @@ app.listen(PORT, () => {
     if (SESSION_SECRET === 'dev-change-me') console.warn('[security] SESSION_SECRET is still the default — set a long random value.');
   }
   try {
-    const n = db.db.prepare('SELECT COUNT(*) AS c FROM businesses').get().c;
-    if (!n) console.log('  (no businesses yet — run `npm run seed` to create the demo business)');
+    db.countBusinesses().then((n) => {
+      if (!n) console.log('  (no businesses yet — run `npm run seed` to create the demo business)');
+    }).catch(() => {});
   } catch {}
 });

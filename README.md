@@ -85,7 +85,9 @@ Any OpenAI-compatible `/chat/completions` endpoint works (OpenAI, Azure, Ollama,
 | `POST /api/webhook/orders` | `X-Webhook-Secret` header | `{orders:[{order_number, status, eta?, carrier?, tracking_number?, items?}]}` — upserts live order data. The secret is per-business, shown once at provision/seed, regenerable in Admin → Settings |
 | `POST /api/auth/login` | — (IP rate-limited) | `{username, password}` → session cookie |
 | `GET/POST/PUT/DELETE /api/admin/faqs…` | session | Knowledge base CRUD (business-scoped) |
-| `GET/PUT /api/admin/settings` | session | Business name, welcome message, brand color, support email, lead-capture toggle, allowed origins, LLM config (secrets returned as `*_set` flags, never values) |
+| `POST /api/admin/crawl` | session | `{url, max_pages}` → crawls the website in the background and imports its pages into the knowledge base (Q/A pairs when an LLM is configured, raw chunks otherwise) |
+| `GET /api/admin/documents`, `DELETE /api/admin/documents/:id` | session | List / delete crawled knowledge documents |
+| `GET/PUT /api/admin/settings` | session | Business name, welcome message, brand color, support email, lead-capture toggle, default language, auto-translate toggle, allowed origins, LLM config (secrets returned as `*_set` flags, never values) |
 | `GET /api/admin/webhook`, `POST /api/admin/webhook/regenerate` | session | Webhook secret status / rotation (plaintext shown once) |
 | `GET /api/admin/leads[?format=csv]` | session | Leads, CSV-exportable |
 | `GET /api/admin/sessions[?flagged=1]`, `GET /api/admin/sessions/:id`, `POST …/resolve` | session | Conversations & transcripts, human-follow-up queue |
@@ -104,6 +106,26 @@ https://shop.example.com, https://www.example.com, https://*.example.com
 - Entries are matched against the request's `Origin`/`Referer` headers (browsers always send one for the widget's cross-site fetch). `*.example.com` covers subdomains.
 - Mismatches get `403 { "error": "origin not allowed for this widget" }`.
 - **Empty = allow all.** That's fine for development, but set it for every real client before going live — otherwise anyone with the (public) widget key could embed the bot on their own site and burn your quota.
+
+## Production database
+
+By default the app uses a local SQLite file (`data/chatbot.db` — zero native
+dependencies, via Node's built-in `node:sqlite`). For production — where
+deploys are ephemeral and data must survive restarts — point it at Postgres:
+
+```bash
+DATABASE_URL=postgresql://user:password@host:5432/chatbot
+```
+
+When `DATABASE_URL` is set, `lib/db.js` switches to the pure-JS `pg` driver (no
+native compilation step); when unset, it keeps using SQLite. The schema,
+migrations, and queries are dialect-portable, so you can develop on SQLite and
+deploy on Postgres with no code changes. Tables and migrations run
+automatically on boot in both modes.
+
+**On Render:** create a Postgres instance, copy its **Internal Database URL**
+into the service's `DATABASE_URL` env var, and redeploy. SQLite data does
+**not** migrate automatically — seed or re-import as needed.
 
 ## Deployment
 
@@ -127,7 +149,7 @@ npm i -g pm2 && pm2 start server.js --name chatbot-saas && pm2 save && pm2 start
 
 ## Notes on the stack
 
-- **SQLite via Node's built-in `node:sqlite`** (Node ≥ 22.5) — no native compilation step, so `npm install` works everywhere, including minimal Docker images and hosts without build tools. Passwords are hashed with `crypto.scrypt` for the same reason. If you prefer `better-sqlite3` + `bcrypt`, the data-access layer is isolated in `lib/db.js` and the hashing in `verifyPassword`/`hashPassword`.
+- **SQLite via Node's built-in `node:sqlite`** (Node ≥ 22.5) — no native compilation step, so `npm install` works everywhere, including minimal Docker images and hosts without build tools. Set `DATABASE_URL` to switch the same code to Postgres (pure-JS `pg` driver) for production persistence. Passwords are hashed with `crypto.scrypt` for the same reason. If you prefer `better-sqlite3` + `bcrypt`, the data-access layer is isolated in `lib/db.js` and the hashing in `verifyPassword`/`hashPassword`.
 - **Session storage** uses Express's default in-memory store — fine for a single instance; add a Redis-backed store if you scale horizontally.
 
 ## Project layout
@@ -136,9 +158,10 @@ npm i -g pm2 && pm2 start server.js --name chatbot-saas && pm2 save && pm2 start
 ├── server.js            # Express app: widget API, chat+SSE, webhook, auth, admin API, static
 ├── seed.js              # demo business + FAQs + mock orders + admin account
 ├── lib/
-│   ├── db.js            # SQLite schema + queries (node:sqlite), scrypt password hashing
-│   ├── bot.js           # chat engine: intents, capture flows, escalation
-│   ├── retrieval.js     # TF-IDF cosine FAQ matching
+│   ├── db.js            # schema + queries; SQLite (node:sqlite) or Postgres (pg) via DATABASE_URL — async API
+│   ├── bot.js           # chat engine: intents, capture flows, escalation, multi-language
+│   ├── crawl.js         # website crawler + knowledge ingestion (chunks / LLM Q-A pairs)
+│   ├── retrieval.js     # TF-IDF cosine matching over FAQs + crawled documents
 │   └── llm.js           # OpenAI-compatible completions (+streaming helper)
 ├── public/
 │   ├── widget/          # widget.js + widget.css — the embeddable snippet
