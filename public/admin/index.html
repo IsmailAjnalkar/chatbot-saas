@@ -156,10 +156,18 @@ function me_business_id() { return window.__bizId || ''; }
 function doLogin() {
   var u = document.getElementById('username').value.trim();
   var p = document.getElementById('password').value;
-  req('POST', '/api/auth/login', { username: u, password: p }).then(function (r) {
-    if (r.status !== 200) { var e = document.getElementById('login-err'); e.style.display = 'block'; e.textContent = r.json.error || 'Login failed'; return; }
-    req('GET', '/api/auth/me').then(function (m) { showApp(m.json); });
-  }).catch(function () {});
+  var e = document.getElementById('login-err');
+  e.style.display = 'none';
+  // NOTE: don't use req() here — it throws on 401 before we can show the error.
+  fetch(API + '/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: u, password: p }),}).then(function (r) {
+    return r.json().catch(function () { return {}; }).then(function (j) { return { status: r.status, json: j }; });}).then(function (r) {
+    if (r.status === 429) { e.style.display = 'block'; e.textContent = 'Too many attempts — wait a minute and try again.'; return; }
+    if (r.status !== 200) { e.style.display = 'block'; e.textContent = (r.json && r.json.error) || 'Login failed'; return; }
+    req('GET', '/api/auth/me').then(function (m) { showApp(m.json); }).catch(function () {});}).catch(function () {
+    e.style.display = 'block'; e.textContent = 'Could not reach the server. Check your connection and try again.';});
 }
 function doLogout() { req('POST', '/api/auth/logout').then(showLogin); }
 document.getElementById('password').addEventListener('keydown', function (e) { if (e.key === 'Enter') doLogin(); });
