@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ChatbotReply — AI Customer Service Chatbots for E-commerce & SaaS</title>
+<meta name="description" content="ChatbotReply builds AI chatbots that answer questions, track orders, capture leads and resolve support tickets 24/7.">
+<style>
+:root{
+  --bg:#0b1026; --bg2:#111736; --ink:#eef1ff; --muted:#a5adcf;
+  --brand:#6366f1; --brand2:#8b5cf6; --accent:#22d3ee;
+  --card:#ffffff; --line:#e6e9f5; --dark:#0e1330;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--dark);background:#fff;line-height:1.6;overflow-x:hidden}
+a{text-decoration:none;color:inherit}
+.wrap{max-width:1140px;margin:0 auto;padding:0 24px}
+/* ---------- nav ---------- */
+nav{position:fixed;top:0;left:0;right:0;z-index:50;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);background:rgba(11,16,38,.72);border-bottom:1px solid rgba(255,255,255,.08)}
+.nav-in{max-width:1140px;margin:0 auto;padding:14px 24px;display:flex;align-items:center;justify-content:space-between}
+.logo{font-weight:800;font-size:20px;color:#fff;letter-spacing:-.5px}
+.logo span{background:linear-gradient(90deg,var(--brand2),var(--accent));-webkit-background-clip:text;background-clip:text;color:transparent}
+.nav-links{display:flex;gap:28px;color:var(--muted);font-size:15px}
+.nav-links a:hover{color:#fff}
+.btn{display:inline-block;padding:12px 26px;border-radius:999px;font-weight:600;font-size:15px;transition:transform .18s ease,box-shadow .18s ease;cursor:pointer;border:0}
+.btn:hover{transform:translateY(-2px)}
+.btn-primary{background:linear-gradient(90deg,var(--brand),var(--brand2));color:#fff;box-shadow:0 8px 24px rgba(99,102,241,.4)}
+.btn-ghost{background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.2)}
+.btn-dark{background:var(--dark);color:#fff}
+.nav-cta{padding:10px 22px;font-size:14px}
+/* ---------- hero ---------- */
+.hero{background:radial-gradient(1000px 500px at 80% -10%,rgba(139,92,246,.35),transparent),radial-gradient(800px 500px at 10% 20%,rgba(34,211,238,.18),transparent),var(--bg);color:var(--ink);padding:150px 0 90px;position:relative;overflow:hidden}
+.hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;background:rgba(139,92,246,.15);border:1px solid rgba(139,92,246,.4);color:#c4b5fd;font-size:13px;font-weight:600;padding:7px 16px;border-radius:999px;margin-bottom:22px}
+.eyebrow .dot{width:8px;height:8px;border-radius:50%;background:#34d399;animation:pulse 1.6s infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.75)}}
+.hero h1{font-size:52px;line-height:1.08;letter-spacing:-1.5px;font-weight:800;margin-bottom:20px}
+.hero h1 .grad{background:linear-gradient(90deg,#a78bfa,#22d3ee);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p.sub{color:var(--muted);font-size:19px;max-width:480px;margin-bottom:32px}
+.hero-ctas{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:40px}
+.hero-proof{display:flex;gap:26px;color:var(--muted);font-size:14px}
+.hero-proof b{color:#fff;display:block;font-size:20px}
+/* chat mockup */
+.chat-shell{background:#fff;border-radius:20px;box-shadow:0 30px 80px rgba(0,0,0,.5);overflow:hidden;transform:perspective(1200px) rotateY(-6deg) rotateX(2deg);animation:floaty 7s ease-in-out infinite;border:1px solid rgba(255,255,255,.15)}
+@keyframes floaty{0%,100%{transform:perspective(1200px) rotateY(-6deg) rotateX(2deg) translateY(0)}50%{transform:perspective(1200px) rotateY(-6deg) rotateX(2deg) translateY(-14px)}}
+.chat-head{background:linear-gradient(90deg,var(--brand),var(--brand2));color:#fff;padding:16px 20px;display:flex;align-items:center;gap:12px}
+.chat-head .avatar{width:40px;height:40px;border-radius:50%;background:#fff;color:var(--brand);font-weight:800;display:flex;align-items:center;justify-content:center;font-size:18px}
+.chat-head .t b{display:block;font-size:15px}
+.chat-head .t small{opacity:.85;font-size:12px}
+.chat-head .t small i{display:inline-block;width:7px;height:7px;background:#34d399;border-radius:50%;margin-right:5px}
+.chat-body{padding:20px;height:340px;overflow:hidden;display:flex;flex-direction:column;gap:12px;background:#f6f7fc}
+.msg{max-width:80%;padding:11px 15px;border-radius:16px;font-size:14.5px;line-height:1.45;opacity:0;transform:translateY(14px);animation:msgin .45s ease forwards;color:#1e2438}
+@keyframes msgin{to{opacity:1;transform:translateY(0)}}
+.msg.bot{background:#fff;border:1px solid var(--line);border-bottom-left-radius:4px;align-self:flex-start;box-shadow:0 2px 8px rgba(20,20,60,.06)}
+.msg.user{background:linear-gradient(90deg,var(--brand),var(--brand2));color:#fff;border-bottom-right-radius:4px;align-self:flex-end}
+.msg .tag{display:block;font-size:11px;font-weight:700;color:var(--brand2);margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px}
+.typing{align-self:flex-start;background:#fff;border:1px solid var(--line);border-radius:16px;border-bottom-left-radius:4px;padding:13px 17px;display:flex;gap:6px}
+.typing span{width:8px;height:8px;border-radius:50%;background:#b9c0e4;animation:tp 1.2s infinite}
+.typing span:nth-child(2){animation-delay:.15s}.typing span:nth-child(3){animation-delay:.3s}
+@keyframes tp{0%,60%,100%{transform:none;opacity:.5}30%{transform:translateY(-6px);opacity:1}}
+.chat-input{border-top:1px solid var(--line);padding:14px 18px;display:flex;gap:10px;background:#fff}
+.chat-input .fake{flex:1;background:#f1f3fa;border-radius:999px;padding:10px 18px;color:#9aa1c7;font-size:14px}
+.chat-input .send{width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,var(--brand),var(--brand2));display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px}
+/* ---------- logos ---------- */
+.strip{background:#fff;border-bottom:1px solid var(--line);padding:34px 0;text-align:center}
+.strip p{color:#8a90b8;font-size:13px;text-transform:uppercase;letter-spacing:2px;margin-bottom:18px}
+.strip .names{display:flex;justify-content:center;gap:44px;flex-wrap:wrap;color:#b6bcd9;font-weight:700;font-size:19px}
+/* ---------- stats ---------- */
+.stats{background:var(--bg);color:#fff;padding:70px 0}
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;text-align:center}
+.stat b{font-size:44px;font-weight:800;background:linear-gradient(90deg,#a78bfa,#22d3ee);-webkit-background-clip:text;background-clip:text;color:transparent;display:block;letter-spacing:-1px}
+.stat span{color:var(--muted);font-size:15px}
+/* ---------- sections ---------- */
+section.block{padding:96px 0}
+.kicker{color:var(--brand);font-weight:700;font-size:14px;text-transform:uppercase;letter-spacing:2px;margin-bottom:12px}
+h2.title{font-size:38px;letter-spacing:-1px;font-weight:800;margin-bottom:16px;line-height:1.2}
+p.lead{color:#5b6285;font-size:18px;max-width:640px;margin-bottom:48px}
+.feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+.feat{background:#fff;border:1px solid var(--line);border-radius:18px;padding:30px;transition:transform .2s ease,box-shadow .2s ease}
+.feat:hover{transform:translateY(-6px);box-shadow:0 20px 44px rgba(30,30,90,.1)}
+.feat .ic{width:52px;height:52px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:24px;margin-bottom:18px;background:linear-gradient(135deg,rgba(99,102,241,.12),rgba(139,92,246,.12))}
+.feat h3{font-size:18px;margin-bottom:8px}
+.feat p{color:#5b6285;font-size:15px}
+/* reveal on scroll */
+.rv{opacity:0;transform:translateY(28px);transition:opacity .7s ease,transform .7s ease}
+.rv.on{opacity:1;transform:none}
+/* steps */
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;counter-reset:step}
+.step{background:linear-gradient(180deg,#f7f8ff,#fff);border:1px solid var(--line);border-radius:18px;padding:34px 30px;position:relative}
+.step::before{counter-increment:step;content:counter(step);position:absolute;top:-22px;left:28px;width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;font-size:19px;box-shadow:0 8px 20px rgba(99,102,241,.35)}
+.step h3{margin:10px 0 8px;font-size:19px}
+.step p{color:#5b6285;font-size:15px}
+/* channels */
+.channels{background:var(--bg2);color:var(--ink);border-radius:28px;padding:64px;display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;margin:0 24px}
+.channels h2{color:#fff;font-size:34px;letter-spacing:-.8px;margin-bottom:14px}
+.channels p{color:var(--muted);font-size:17px;margin-bottom:26px}
+.chips{display:flex;gap:12px;flex-wrap:wrap}
+.chip{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);color:#fff;padding:10px 20px;border-radius:999px;font-size:14px;font-weight:600}
+.phone{width:270px;margin:0 auto;background:#0b1026;border:1px solid rgba(255,255,255,.14);border-radius:34px;padding:14px;box-shadow:0 24px 60px rgba(0,0,0,.45);animation:floaty 8s ease-in-out infinite}
+.phone .scr{background:#f6f7fc;border-radius:24px;overflow:hidden}
+.phone .wa-head{background:#075e54;color:#fff;padding:14px;font-size:14px;font-weight:700}
+.wa-msg{background:#dcf8c6;margin:12px;border-radius:10px;padding:10px 13px;font-size:13.5px;color:#1e2438;max-width:85%}
+.wa-msg.bot{background:#fff}
+/* testimonials */
+.testi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+.testi{background:#f8f9ff;border:1px solid var(--line);border-radius:18px;padding:30px}
+.testi .stars{color:#f59e0b;font-size:17px;letter-spacing:3px;margin-bottom:12px}
+.testi p{font-size:15.5px;color:#3c4266;margin-bottom:18px}
+.testi .who{display:flex;align-items:center;gap:12px}
+.testi .who .av{width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,var(--brand),var(--accent));color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center}
+.testi .who b{display:block;font-size:15px}
+.testi .who small{color:#8a90b8}
+/* pricing teaser */
+.tiers{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;align-items:stretch}
+.tier{background:#fff;border:1px solid var(--line);border-radius:20px;padding:36px 32px;position:relative}
+.tier.hot{border:2px solid var(--brand);box-shadow:0 24px 60px rgba(99,102,241,.18);transform:scale(1.03)}
+.tier .flag{position:absolute;top:-14px;left:50%;transform:translateX(-50%);background:linear-gradient(90deg,var(--brand),var(--brand2));color:#fff;font-size:12px;font-weight:700;padding:5px 18px;border-radius:999px;text-transform:uppercase;letter-spacing:1px}
+.tier h3{font-size:20px;margin-bottom:6px}
+.tier .price{font-size:40px;font-weight:800;letter-spacing:-1px;margin:10px 0 4px}
+.tier .price small{font-size:15px;color:#8a90b8;font-weight:500}
+.tier ul{list-style:none;margin:22px 0 28px;color:#3c4266;font-size:15px}
+.tier li{padding:7px 0 7px 28px;position:relative}
+.tier li::before{content:"✓";position:absolute;left:0;color:#10b981;font-weight:800}
+/* faq */
+.faq{max-width:760px;margin:0 auto}
+.faq-item{border:1px solid var(--line);border-radius:14px;margin-bottom:12px;overflow:hidden;background:#fff}
+.faq-q{padding:20px 24px;font-weight:700;font-size:16.5px;cursor:pointer;display:flex;justify-content:space-between;align-items:center}
+.faq-q::after{content:"+";font-size:24px;color:var(--brand);font-weight:400;transition:transform .25s}
+.faq-item.open .faq-q::after{transform:rotate(45deg)}
+.faq-a{max-height:0;overflow:hidden;transition:max-height .35s ease;color:#5b6285;font-size:15.5px}
+.faq-a div{padding:0 24px 22px}
+/* cta + footer */
+.cta{background:linear-gradient(120deg,#4c1d95,#6d28d9 55%,#2563eb);border-radius:28px;color:#fff;text-align:center;padding:80px 40px;margin:0 24px 96px;position:relative;overflow:hidden}
+.cta::before{content:"";position:absolute;width:500px;height:500px;border-radius:50%;background:rgba(255,255,255,.08);top:-250px;right:-150px;animation:drift 12s ease-in-out infinite alternate}
+@keyframes drift{to{transform:translate(-60px,60px)}}
+.cta h2{font-size:40px;letter-spacing:-1px;margin-bottom:14px;position:relative}
+.cta p{color:#ddd6fe;font-size:18px;margin-bottom:32px;position:relative}
+.cta .btn-primary{background:#fff;color:#5b21b6;box-shadow:0 12px 30px rgba(0,0,0,.25);position:relative}
+footer{background:var(--bg);color:var(--muted);padding:56px 0 32px;font-size:14.5px}
+.foot-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:32px;margin-bottom:40px}
+.foot-grid h4{color:#fff;margin-bottom:14px;font-size:15px}
+.foot-grid a{display:block;padding:5px 0}
+.foot-grid a:hover{color:#fff}
+.foot-bottom{border-top:1px solid rgba(255,255,255,.1);padding-top:24px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px}
+/* responsive */
+@media(max-width:900px){
+  .hero-grid{grid-template-columns:1fr}
+  .hero h1{font-size:38px}
+  .chat-shell{transform:none;animation:floaty2 7s ease-in-out infinite}
+  @keyframes floaty2{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+  .feat-grid,.steps,.tiers,.testi-grid,.stats-grid{grid-template-columns:1fr}
+  .tier.hot{transform:none}
+  .channels{grid-template-columns:1fr;padding:40px 28px}
+  .foot-grid{grid-template-columns:1fr 1fr}
+  .nav-links{display:none}
+  section.block{padding:64px 0}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-in">
+    <a class="logo" href="/">Chatbot<span>Reply</span></a>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#faq">FAQ</a>
+    </div>
+    <div style="display:flex;gap:10px">
+      <a class="btn btn-ghost nav-cta" href="/demo/">Live demo</a>
+      <a class="btn btn-primary nav-cta" href="/pricing/">Get started</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="eyebrow"><span class="dot"></span> AI support that never sleeps</div>
+      <h1>Your store's <span class="grad">smartest support agent</span>, working 24/7</h1>
+      <p class="sub">ChatbotReply answers questions, tracks orders, captures leads and resolves tickets automatically — in 7 languages, on your site, WhatsApp and Messenger.</p>
+      <div class="hero-ctas">
+        <a class="btn btn-primary" href="/demo/">Try the live demo</a>
+        <a class="btn btn-ghost" href="#how">See how it works</a>
+      </div>
+      <div class="hero-proof">
+        <div><b>&lt;2s</b>avg. response</div>
+        <div><b>24/7</b>always online</div>
+        <div><b>7</b>languages</div>
+      </div>
+    </div>
+    <div>
+      <div class="chat-shell">
+        <div class="chat-head">
+          <div class="avatar">C</div>
+          <div class="t"><b>ChatbotReply</b><small><i></i>Online — replies instantly</small></div>
+        </div>
+        <div class="chat-body" id="chatLoop"></div>
+        <div class="chat-input"><div class="fake">Ask about orders, returns, shipping…</div><div class="send">➤</div></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="strip">
+  <div class="wrap">
+    <p>Built for modern e-commerce &amp; SaaS teams</p>
+    <div class="names"><span>Shopify</span><span>WooCommerce</span><span>WhatsApp</span><span>Messenger</span><span>Stripe</span></div>
+  </div>
+</div>
+
+<div class="stats">
+  <div class="wrap stats-grid">
+    <div class="stat rv"><b data-count="40" data-suffix="%">0%</b><span>fewer support tickets</span></div>
+    <div class="stat rv"><b data-count="2" data-prefix="&lt;" data-suffix="s">0</b><span>average response time</span></div>
+    <div class="stat rv"><b data-count="24" data-suffix="/7">0</b><span>always online</span></div>
+    <div class="stat rv"><b data-count="7" data-suffix="">0</b><span>languages supported</span></div>
+  </div>
+</div>
+
+<section class="block" id="features">
+  <div class="wrap">
+    <div class="kicker rv">Features</div>
+    <h2 class="title rv">Everything a support team does.<br>Automated.</h2>
+    <p class="lead rv">One embeddable widget that learns your business and handles the repetitive 80% — so your team handles the 20% that matters.</p>
+    <div class="feat-grid">
+      <div class="feat rv"><div class="ic">💬</div><h3>Instant answers</h3><p>Trained on your FAQs, docs and website. Answers with confidence scoring and cited sources.</p></div>
+      <div class="feat rv"><div class="ic">📦</div><h3>Order tracking &amp; actions</h3><p>Look up orders, cancel or refund them — with explicit customer confirmation and full audit logs.</p></div>
+      <div class="feat rv"><div class="ic">🌍</div><h3>7 languages</h3><p>English, Spanish, French, German, Portuguese, Hindi and Arabic — auto-detected per visitor.</p></div>
+      <div class="feat rv"><div class="ic">🟢</div><h3>WhatsApp &amp; Messenger</h3><p>Meet customers where they are. One inbox for website chat, WhatsApp and Messenger.</p></div>
+      <div class="feat rv"><div class="ic">🎯</div><h3>Lead capture</h3><p>Collects names and emails mid-conversation and hands hot leads to your team.</p></div>
+      <div class="feat rv"><div class="ic">📊</div><h3>CSAT analytics</h3><p>Thumbs up/down on every answer, resolution funnels, and proactive visitor nudges.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="how" style="background:#f8f9ff">
+  <div class="wrap">
+    <div class="kicker rv">How it works</div>
+    <h2 class="title rv">Live on your site in 10 minutes</h2>
+    <p class="lead rv">No developers needed. No training data to prepare.</p>
+    <div class="steps">
+      <div class="step rv"><h3>Add your website</h3><p>Paste your URL and ChatbotReply crawls your pages, FAQs and docs to learn your business.</p></div>
+      <div class="step rv"><h3>Embed one snippet</h3><p>Drop a single script tag on your site. Customize colors, position and languages in the dashboard.</p></div>
+      <div class="step rv"><h3>Watch it resolve tickets</h3><p>The bot answers, tracks orders and captures leads 24/7. Review everything in the analytics inbox.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="block">
+  <div class="channels rv">
+    <div>
+      <div class="kicker" style="color:#a78bfa">Omnichannel</div>
+      <h2>One bot, every channel your customers use</h2>
+      <p>Website chat, WhatsApp and Messenger — all powered by the same brain, all visible in one conversation inbox.</p>
+      <div class="chips"><span class="chip">💻 Website widget</span><span class="chip">🟢 WhatsApp</span><span class="chip">💙 Messenger</span><span class="chip">🎙️ Voice input</span></div>
+      <br><a class="btn btn-primary" href="/demo/">See it in action</a>
+    </div>
+    <div>
+      <div class="phone"><div class="scr">
+        <div class="wa-head">Glow &amp; Co. Support</div>
+        <div class="wa-msg">Hi! Where is my order? 📦</div>
+        <div class="wa-msg bot">Your order <b>ORD-1003</b> is out for delivery — arriving tomorrow by 2pm.</div>
+        <div class="wa-msg">Perfect, thank you!</div>
+        <div class="wa-msg bot">Anytime! Rate your experience 👍👎</div>
+      </div></div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="pricing">
+  <div class="wrap">
+    <div class="kicker rv">Pricing</div>
+    <h2 class="title rv">Simple pricing, serious ROI</h2>
+    <p class="lead rv">One support hire costs $4,000/month. ChatbotReply starts at $99.</p>
+    <div class="tiers">
+      <div class="tier rv"><h3>Starter</h3><div class="price">$99<small>/mo</small></div><p style="color:#8a90b8;font-size:14px">+ $500 setup</p>
+        <ul><li>1 website chatbot</li><li>1,000 conversations/mo</li><li>FAQ + order lookup</li><li>Email support</li></ul>
+        <a class="btn btn-dark" style="width:100%;text-align:center" href="/pricing/">Choose Starter</a></div>
+      <div class="tier hot rv"><div class="flag">Most popular</div><h3>Growth</h3><div class="price">$199<small>/mo</small></div><p style="color:#8a90b8;font-size:14px">+ $1,000 setup</p>
+        <ul><li>Everything in Starter</li><li>10,000 conversations/mo</li><li>WhatsApp + Messenger</li><li>Agentic order actions</li><li>CSAT analytics</li></ul>
+        <a class="btn btn-primary" style="width:100%;text-align:center" href="/pricing/">Choose Growth</a></div>
+      <div class="tier rv"><h3>Scale</h3><div class="price">$399<small>/mo</small></div><p style="color:#8a90b8;font-size:14px">+ $2,500 setup</p>
+        <ul><li>Everything in Growth</li><li>Unlimited conversations</li><li>7 languages + voice</li><li>Priority support</li></ul>
+        <a class="btn btn-dark" style="width:100%;text-align:center" href="/pricing/">Choose Scale</a></div>
+    </div>
+  </div>
+</section>
+
+<section class="block" style="background:#f8f9ff">
+  <div class="wrap">
+    <div class="kicker rv">Loved by store owners</div>
+    <h2 class="title rv">Teams sleep. ChatbotReply doesn't.</h2>
+    <p class="lead rv">&nbsp;</p>
+    <div class="testi-grid">
+      <div class="testi rv"><div class="stars">★★★★★</div><p>"It handles 70% of our 'where is my order' chats. My support inbox finally breathes."</p><div class="who"><div class="av">S</div><div><b>Sarah M.</b><small>Shopify store owner</small></div></div></div>
+      <div class="testi rv"><div class="stars">★★★★★</div><p>"Setup took 10 minutes — it crawled our whole site. Customers think it's a human half the time."</p><div class="who"><div class="av">D</div><div><b>David K.</b><small>SaaS founder</small></div></div></div>
+      <div class="testi rv"><div class="stars">★★★★★</div><p>"The WhatsApp integration alone paid for itself. Order cancellations happen while I sleep."</p><div class="who"><div class="av">P</div><div><b>Priya R.</b><small>Boutique owner</small></div></div></div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="faq">
+  <div class="wrap">
+    <div class="kicker rv" style="text-align:center">FAQ</div>
+    <h2 class="title rv" style="text-align:center">Questions, answered</h2>
+    <p class="lead rv" style="text-align:center;margin-left:auto;margin-right:auto">&nbsp;</p>
+    <div class="faq">
+      <div class="faq-item rv"><div class="faq-q">Do I need a developer to install it?</div><div class="faq-a"><div>No. Paste one script tag into your site, or connect WhatsApp/Messenger from the dashboard. Most stores are live in under 10 minutes.</div></div></div>
+      <div class="faq-item rv"><div class="faq-q">How does it learn about my business?</div><div class="faq-a"><div>Enter your website URL and it crawls your pages automatically. You can also upload documents or add FAQs manually in the Knowledge tab.</div></div></div>
+      <div class="faq-item rv"><div class="faq-q">Can it really cancel and refund orders?</div><div class="faq-a"><div>Yes — with guardrails. It always asks the customer to confirm first, refunds above your auto-approve limit need approval, and every action is logged in the audit trail.</div></div></div>
+      <div class="faq-item rv"><div class="faq-q">What happens when the bot can't answer?</div><div class="faq-a"><div>It captures the visitor's details and hands the conversation to your team with full context — no dead ends.</div></div></div>
+      <div class="faq-item rv"><div class="faq-q">Which languages does it speak?</div><div class="faq-a"><div>English, Spanish, French, German, Portuguese, Hindi and Arabic, auto-detected per visitor.</div></div></div>
+    </div>
+  </div>
+</section>
+
+<div class="cta rv">
+  <h2>Put support on autopilot tonight</h2>
+  <p>Join the stores resolving tickets while they sleep.</p>
+  <a class="btn btn-primary" href="/pricing/" style="font-size:17px;padding:15px 40px">Get started</a>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div><a class="logo" href="/" style="margin-bottom:14px;display:inline-block">Chatbot<span>Reply</span></a><p style="max-width:280px">AI customer-service chatbots for e-commerce &amp; SaaS. Answer, track, resolve — 24/7.</p></div>
+      <div><h4>Product</h4><a href="#features">Features</a><a href="/pricing/">Pricing</a><a href="/demo/">Live demo</a></div>
+      <div><h4>Resources</h4><a href="#how">How it works</a><a href="#faq">FAQ</a></div>
+      <div><h4>Company</h4><a href="/admin/">Admin login</a></div>
+    </div>
+    <div class="foot-bottom"><span>© 2026 ChatbotReply. All rights reserved.</span><span>Made for stores that never sleep.</span></div>
+  </div>
+</footer>
+
+<script>
+// ---- looping hero chat demo ----
+(function(){
+  var box=document.getElementById('chatLoop');
+  var script=[
+    {who:'user',html:'Where is my order?'},
+    {who:'bot',tag:'Order lookup',html:'Your order <b>ORD-1003</b> is out for delivery — arriving tomorrow by 2pm.'},
+    {who:'user',html:'Can I change it to my work address?'},
+    {who:'bot',tag:'Human handoff',html:'Of course — I\'ve flagged this for our team with your order details. They\'ll confirm within the hour.'},
+    {who:'user',html:'Thanks! What\'s your return policy?'},
+    {who:'bot',tag:'FAQ · 98% confident',html:'30-day returns on unopened items, full refund. Anything else I can help with?'}
+  ];
+  var i=0;
+  function typingThen(msg, next){
+    var t=document.createElement('div');t.className='typing';t.innerHTML='<span></span><span></span><span></span>';
+    box.appendChild(t);box.scrollTop=box.scrollHeight;
+    setTimeout(function(){ t.remove(); addMsg(msg); setTimeout(next, msg.who==='user'?900:1600); }, msg.who==='user'?500:1300);
+  }
+  function addMsg(m){
+    var d=document.createElement('div');d.className='msg '+m.who;
+    d.innerHTML=(m.tag?'<span class="tag">'+m.tag+'</span>':'')+m.html;
+    box.appendChild(d);box.scrollTop=box.scrollHeight;
+  }
+  function play(){
+    box.innerHTML='';i=0;
+    (function step(){
+      if(i>=script.length){ setTimeout(play, 3500); return; }
+      var m=script[i++];
+      if(m.who==='user'){ addMsg(m); setTimeout(step, 1000); }
+      else typingThen(m, step);
+    })();
+  }
+  play();
+})();
+// ---- scroll reveal ----
+(function(){
+  var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('on');io.unobserve(e.target);}})},{threshold:.12});
+  document.querySelectorAll('.rv').forEach(function(el){io.observe(el)});
+})();
+// ---- animated counters ----
+(function(){
+  var done=false;
+  var io=new IntersectionObserver(function(es){es.forEach(function(e){
+    if(e.isIntersecting&&!done){done=true;
+      document.querySelectorAll('[data-count]').forEach(function(el){
+        var target=+el.dataset.count,pre=el.dataset.prefix||'',suf=el.dataset.suffix||'',t0=null;
+        function tick(t){if(!t0)t0=t;var p=Math.min((t-t0)/1400,1);el.innerHTML=pre+Math.round(target*(1-Math.pow(1-p,3)))+suf;if(p<1)requestAnimationFrame(tick)}
+        requestAnimationFrame(tick);
+      });
+      io.disconnect();
+    }
+  })},{threshold:.4});
+  io.observe(document.querySelector('.stats'));
+})();
+// ---- faq accordion ----
+document.querySelectorAll('.faq-q').forEach(function(q){
+  q.addEventListener('click',function(){
+    var item=q.parentElement,a=item.querySelector('.faq-a'),open=item.classList.contains('open');
+    document.querySelectorAll('.faq-item.open').forEach(function(o){o.classList.remove('open');o.querySelector('.faq-a').style.maxHeight=null});
+    if(!open){item.classList.add('open');a.style.maxHeight=a.scrollHeight+'px'}
+  });
+});
+</script>
+</body>
+</html>

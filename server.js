@@ -761,7 +761,7 @@ app.use('/widget', express.static(path.join(__dirname, 'public', 'widget')));
 app.use('/demo', express.static(path.join(__dirname, 'public', 'demo')));
 app.use('/admin', express.static(path.join(__dirname, 'public', 'admin')));
 app.use('/pricing', express.static(path.join(__dirname, 'public', 'pricing')));
-app.get('/', (req, res) => res.redirect('/demo/'));
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 app.listen(PORT, () => {
   console.log(`chatbot-saas listening on http://localhost:${PORT}`);
