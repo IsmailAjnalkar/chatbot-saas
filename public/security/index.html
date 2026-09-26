@@ -51,19 +51,25 @@
   <p>We <strong>never sell</strong> your data or your customers' data, and we don't use your content to train shared models.</p>
 
   <h2>AI processing</h2>
-  <p>When AI answers are enabled, conversation text is sent to the configured AI provider (OpenAI-compatible API — either your own key or ChatbotReply's managed key) solely to generate the reply. Providers are instructed not to retain or train on this data per their API data policies.</p>
+  <p>When AI answers are enabled, conversation text is sent to the configured AI provider (an OpenAI-compatible API — either your own key or ChatbotReply's managed key) solely to generate the reply.</p>
+  <p><strong>No training on your data:</strong> we never use your content to train shared models. When you bring your own API key, data goes only to your provider under your agreement with them. When you use ChatbotReply's managed key, requests go to our provider under their API platform terms, which exclude API data from model training. Nothing about this page is a substitute for your provider's own data policy — check it if you have specific compliance needs.</p>
 
   <h2>Your GDPR rights</h2>
   <p>If you're in the EU/UK, you can request access, correction, export, or deletion of personal data we hold about you. Store owners can delete conversations, leads, and documents from the admin dashboard at any time. For requests, email <a href="mailto:privacy@chatbotreply.com">privacy@chatbotreply.com</a> — we respond within 30 days.</p>
 
   <h2>Subprocessors</h2>
   <ul>
-    <li><strong>Render</strong> — hosting & infrastructure</li>
-    <li><strong>Stripe</strong> — payments & subscriptions</li>
-    <li><strong>Meta</strong> — WhatsApp, Messenger & Instagram messaging (only if you connect them)</li>
+    <li><strong>Render</strong> — hosting &amp; infrastructure (US)</li>
+    <li><strong>Neon</strong> — managed PostgreSQL database hosting (US)</li>
+    <li><strong>Stripe</strong> — payments &amp; subscriptions</li>
+    <li><strong>Meta</strong> — WhatsApp, Messenger &amp; Instagram messaging (only if you connect them)</li>
     <li><strong>SendGrid / Resend</strong> — transactional email (only if you enable the email channel)</li>
+    <li><strong>Twilio</strong> — voice calls (only if you enable the voice channel)</li>
+    <li><strong>Shopify</strong> — order data you sync (only if you connect your store)</li>
+    <li><strong>hCaptcha</strong> — bot protection on signup and login</li>
     <li><strong>OpenAI-compatible AI provider</strong> — reply generation (only when AI answers are enabled)</li>
   </ul>
+  <p>Our <a href="/dpa/">Data Processing Addendum</a> governs how we handle personal data on your behalf.</p>
 
   <h2>Data retention</h2>
   <p>Chat transcripts and analytics are kept while your account is active so your reports keep working. Delete your account and we remove your business data within 30 days (backups age out within 90 days).</p>
@@ -71,8 +77,17 @@
   <h2>Responsible disclosure</h2>
   <p>Found a security issue? Email <a href="mailto:security@chatbotreply.com">security@chatbotreply.com</a> and we'll investigate promptly. Please don't probe other customers' data.</p>
 
-  <h2>Roadmap</h2>
-  <p>We're working toward SOC 2 Type II certification and published penetration-test summaries as we grow into mid-market deals. This page will be updated as each milestone lands.</p>
+  <h2>Incident response</h2>
+  <p>If we discover a security incident affecting customer data, we will:</p>
+  <ul>
+    <li><strong>Contain</strong> — revoke affected credentials, isolate the issue, and restore service from clean backups if needed.</li>
+    <li><strong>Notify</strong> — inform affected customers without undue delay and within 72 hours of becoming aware, with what happened, what data was involved, and what we're doing about it.</li>
+    <li><strong>Recover</strong> — our recovery targets are <strong>RTO ≤ 4 hours</strong> (stateless app redeploys in minutes; database restores from Neon's automated backups) and <strong>RPO ≤ 24 hours</strong> on current plans.</li>
+    <li><strong>Review</strong> — publish a post-incident summary to affected customers and fix the root cause.</li>
+  </ul>
+
+  <h2>Compliance roadmap</h2>
+  <p>We are not SOC 2 certified and have not completed a formal penetration test yet. Security reviews are part of our roadmap as we grow into larger deals — this page will be updated as each milestone lands. Our <a href="/dpa/">Data Processing Addendum</a> is available now for customers who need one.</p>
 </div>
 </body>
 </html>

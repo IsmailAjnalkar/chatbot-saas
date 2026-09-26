@@ -174,7 +174,23 @@ function doLogin() {
     body: JSON.stringify({ username: u, password: p, captcha_token: cap ? cap.value : '' }),}).then(function (r) {
     return r.json().catch(function () { return {}; }).then(function (j) { return { status: r.status, json: j }; });}).then(function (r) {
     if (r.status === 429) { e.style.display = 'block'; e.textContent = 'Too many attempts — wait a minute and try again.'; return; }
-    if (r.status !== 200) { e.style.display = 'block'; e.textContent = (r.json && r.json.error) || 'Login failed'; return; }
+    if (r.status !== 200) {
+      e.style.display = 'block';
+      if (r.json && r.json.code === 'EMAIL_NOT_VERIFIED') {
+        e.innerHTML = 'Please verify your email before logging in. Didn\'t get the link? <a href="#" id="resend-v">Resend it</a>';
+        document.getElementById('resend-v').onclick = function (ev) {
+          ev.preventDefault();
+          var email = prompt('Enter the email address you signed up with:');
+          if (!email) return;
+          fetch(API + '/api/verify-email/resend', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: email }) })
+            .then(function () { e.innerHTML = 'If that email has an unverified account, a fresh link is on its way (valid 24 hours).'; })
+            .catch(function () { e.textContent = 'Could not send right now — try again later.'; });
+        };
+      } else {
+        e.textContent = (r.json && r.json.error) || 'Login failed';
+      }
+      return;
+    }
     req('GET', '/api/auth/me').then(function (m) { showApp(m.json); }).catch(function () {});}).catch(function () {
     e.style.display = 'block'; e.textContent = 'Could not reach the server. Check your connection and try again.';});
 }
@@ -841,7 +857,10 @@ function loadSettings() {
       '<div class="panel"><h3>Change password</h3>' +
       '<label class="lbl">Current password</label><input id="p-cur" type="password">' +
       '<label class="lbl">New password (min 8 chars)</label><input id="p-new" type="password">' +
-      '<button onclick="changePw()">Change password</button> <span class="ok" id="p-ok" style="display:none">Changed ✓</span> <span class="err" id="p-err" style="display:none"></span></div>' +
+      '<button onclick="changePw()">Change password</button> <span class="ok" id="p-ok" style="display:none">Changed ✓</span> <span class="err" id="p-err" style="display:none"></span></div>
+      '<div class=\"panel\" style=\"border:1px solid #fca5a5\"><h3 style=\"color:#b91c1c\">Danger zone</h3>' +
+      '<p style=\"color:#6b7280;font-size:13px;margin-bottom:12px\">Permanently delete this account and <strong>all</strong> its data — conversations, leads, FAQs, documents, orders, settings. This cannot be undone. Backups age out within 90 days.</p>' +
+      '<button onclick=\"deleteAccount()\" style=\"background:#b91c1c\">Delete my account</button> <span class=\"err\" id=\"del-err\" style=\"display:none\"></span></div>' +' +
       '<div class="panel"><h3>Embed snippet</h3><p style="color:#6b7280;font-size:13px;margin-bottom:12px">Paste this into the client\'s website (before <code>&lt;/body&gt;</code>):</p>' +
       '<textarea id="embed" rows="4" readonly onclick="this.select()"></textarea></div>';
     document.getElementById('embed').value =
@@ -898,6 +917,28 @@ function changePw() {
       err.style.display = 'none'; ok.style.display = 'inline';
       document.getElementById('p-cur').value = ''; document.getElementById('p-new').value = '';
     });
+}
+
+
+function deleteAccount() {
+  var err = document.getElementById('del-err');
+  if (!confirm('Permanently delete this account and ALL its data (conversations, leads, FAQs, documents, orders, settings)? This cannot be undone.')) return;
+  var typed = prompt('Type DELETE to confirm:');
+  if (typed !== 'DELETE') { err.style.display = 'inline'; err.textContent = 'Deletion cancelled.'; return; }
+  // NOTE: don't use req() — it throws on 401 before we can handle the redirect.
+  fetch(API + '/api/admin/account', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirm: true }),
+  }).then(function (r) {
+    return r.json().catch(function () { return {}; }).then(function (j) { return { status: r.status, json: j }; });
+  }).then(function (r) {
+    if (r.status >= 400) { err.style.display = 'inline'; err.textContent = (r.json && r.json.error) || 'Deletion failed'; return; }
+    alert('Your account and all its data have been deleted.');
+    window.location.href = '/';
+  }).catch(function () {
+    err.style.display = 'inline'; err.textContent = 'Could not reach the server. Try again.';
+  });
 }
 
 /* ---------- modal ---------- */

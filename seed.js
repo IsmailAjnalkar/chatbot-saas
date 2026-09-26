@@ -26,6 +26,9 @@ async function main() {
       brand_color: '#7c3aed',
       support_email: 'hello@glowandco.example',
       lead_capture_enabled: true,
+      // The demo business is a system account, not a signup — always verified
+      // so email-verification enforcement on login can never lock it out.
+      email_verified: true,
     },
   });
 

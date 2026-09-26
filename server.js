@@ -62,6 +62,20 @@ app.post('/api/integrations/shopify/webhook/orders', express.raw({ type: '*/*', 
 
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: false, limit: '1mb' })); // Twilio posts form-encoded
+
+// ---------- lightweight request metrics (powers /status) ----------
+// In-memory counters since boot: total requests, 5xx responses, and total
+// latency. No PII is recorded — just counts and timings.
+const metrics = { requests: 0, errors5xx: 0, latencyMsTotal: 0, startedAt: Date.now() };
+app.use((req, res, next) => {
+  const t0 = Date.now();
+  res.on('finish', () => {
+    metrics.requests++;
+    metrics.latencyMsTotal += Date.now() - t0;
+    if (res.statusCode >= 500) metrics.errors5xx++;
+  });
+  next();
+});
 app.use(session({
   secret: SESSION_SECRET,
   resave: false,
@@ -641,6 +655,9 @@ app.post('/api/signup', signupLimiter, async (req, res) => {
     } catch { return res.status(400).json({ error: 'website URL looks invalid' }); }
   }
   try {
+    // Duplicate-account protection: one trial account per email address.
+    const dupe = await db.findBusinessByContactEmail(email);
+    if (dupe) return res.status(409).json({ error: 'an account with this email already exists — please log in to your dashboard instead' });
     const business = await db.createBusiness({
       name: businessName,
       settings: {
@@ -779,6 +796,24 @@ app.post('/api/admin/verify-email/resend', async (req, res) => {
   }
 });
 
+// Public resend for users blocked at login before verifying their email.
+// Rate-limited; always returns ok:true so it can't be used to probe which
+// emails have accounts.
+app.post('/api/verify-email/resend', signupLimiter, async (req, res) => {
+  const email = String((req.body && req.body.email) || '').trim().toLowerCase();
+  try {
+    const business = await db.findBusinessByContactEmail(email);
+    const verified = business && business.settings && business.settings.email_verified;
+    if (business && !verified && channels.emailConfigured()) {
+      const verifyToken = await db.createEmailVerification(business.id, email);
+      const base = `${req.protocol}://${req.get('host')}`;
+      await channels.sendEmailText(business, email, 'Verify your chatbot account',
+        `Please verify your email:\n\n${base}/api/verify-email?token=${verifyToken}\n\nThis link expires in 24 hours.`);
+    }
+  } catch (e) { console.warn('[verify-email/resend] failed:', e.message); }
+  res.json({ ok: true });
+});
+
 // ---------- auth ----------
 app.post('/api/auth/login', loginLimiter, async (req, res) => {
   const loginCaptcha = await captcha.verifyCaptcha(req.body && req.body.captcha_token, req.ip);
@@ -789,6 +824,11 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
     return res.status(401).json({ error: 'invalid username or password' });
   }
   const business = await db.getBusinessById(admin.business_id);
+  // Enforce verified email before login — but only when email sending is
+  // actually configured; otherwise nobody could ever verify.
+  if (channels.emailConfigured() && !(business && business.settings && business.settings.email_verified)) {
+    return res.status(403).json({ error: 'please verify your email before logging in — check your inbox for the verification link, or request a new one', code: 'EMAIL_NOT_VERIFIED' });
+  }
   req.session.admin = { username: admin.username, business_id: admin.business_id };
   res.json({ ok: true, username: admin.username, business: { id: business.id, name: business.name } });
 });
@@ -1291,6 +1331,25 @@ admin.get('/account', async (req, res) => {
   });
 });
 
+// Delete the entire tenant account and all its data (conversations, leads,
+// FAQs, documents, orders, settings, admins). This backs the deletion promise
+// on the /security page. Requires explicit confirm:true in the body; the
+// session is destroyed and the business row is removed last.
+admin.delete('/account', async (req, res) => {
+  if (!req.body || req.body.confirm !== true) {
+    return res.status(400).json({ error: 'pass { "confirm": true } to permanently delete your account and all its data' });
+  }
+  const businessId = req.businessId;
+  req.session.destroy(() => {});
+  try {
+    await db.deleteBusiness(businessId);
+  } catch (err) {
+    console.error('[admin] account deletion failed:', err.message);
+    return res.status(500).json({ error: 'deletion failed, please try again' });
+  }
+  res.json({ ok: true, deleted: true });
+});
+
 admin.get('/analytics', async (req, res) => {
   const biz = req.businessId;
   res.json({
@@ -1484,8 +1543,14 @@ app.get('/status', async (req, res) => {
   ];
   const allOk = dbOk;
   const uptimeMin = Math.floor(process.uptime() / 60);
+  const avgLatencyMs = metrics.requests ? Math.round(metrics.latencyMsTotal / metrics.requests) : 0;
+  const traffic = {
+    requests_since_boot: metrics.requests,
+    avg_latency_ms: avgLatencyMs,
+    errors_5xx_since_boot: metrics.errors5xx,
+  };
   const row = (c) => `<tr><td>${c.name}</td><td>${c.ok ? '✅ Operational' : '⚪ Not configured'}</td><td>${c.detail || ''}</td></tr>`;
-  if ((req.query.format || '') === 'json') return res.json({ ok: allOk, uptime_min: uptimeMin, checks });
+  if ((req.query.format || '') === 'json') return res.json({ ok: allOk, uptime_min: uptimeMin, traffic, checks });
   res.status(allOk ? 200 : 503).send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Status — ChatbotReply</title>
 <style>body{font-family:system-ui,sans-serif;max-width:640px;margin:2rem auto;padding:0 1rem;line-height:1.6}
@@ -1494,7 +1559,8 @@ table{width:100%;border-collapse:collapse;margin-top:1rem}td{padding:.5rem;borde
 <body><h1>ChatbotReply status</h1>
 <div class="banner">${allOk ? 'All core systems operational' : 'Core system issue detected'}</div>
 <table>${checks.map(row).join('')}</table>
-<p>Uptime: ${uptimeMin} min · <a href="/status?format=json">JSON</a></p></body></html>`);
+<p>Uptime: ${uptimeMin} min · Requests since boot: ${traffic.requests_since_boot} · Avg latency: ${traffic.avg_latency_ms} ms · 5xx errors since boot: ${traffic.errors_5xx_since_boot} · <a href="/status?format=json">JSON</a></p>
+<p style="color:#6b7280;font-size:13px">For uptime alerting, point any free monitor (e.g. UptimeRobot) at <code>/api/health</code> — it returns 200 when the database is reachable, 503 otherwise.</p></body></html>`);
 });
 
 // ---------- static frontends ----------
@@ -1503,6 +1569,7 @@ app.use('/demo', express.static(path.join(__dirname, 'public', 'demo')));
 app.use('/admin', express.static(path.join(__dirname, 'public', 'admin')));
 app.use('/pricing', express.static(path.join(__dirname, 'public', 'pricing')));
 app.use('/security', express.static(path.join(__dirname, 'public', 'security')));
+app.use('/dpa', express.static(path.join(__dirname, 'public', 'dpa')));
 app.use('/signup', express.static(path.join(__dirname, 'public', 'signup')));
 // Public help center: published articles for a business (Markdown -> simple HTML).
 app.get('/help/:businessId', async (req, res) => {
