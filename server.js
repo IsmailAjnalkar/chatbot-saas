@@ -709,6 +709,30 @@ app.get('/api/nudge', nudgeLimiter, async (req, res) => {
   res.json({ nudges: await db.getPendingNudges(business.id, s.id), human_active: !!s.human_active });
 });
 
+// POST /api/nudge/trigger {key, session_id, trigger} — fire a proactive trigger
+// ('welcome' | 'idle_30s' | 'exit_intent'). When a running A/B test exists for
+// the trigger, the session is assigned a variant (stable hash) and the nudge
+// is queued; otherwise nothing happens. One nudge per test per session.
+app.post('/api/nudge/trigger', nudgeLimiter, async (req, res) => {
+  const { key, session_id, trigger } = req.body || {};
+  const business = await db.getBusinessByKey(key || '');
+  if (!business) return res.status(401).json({ error: 'invalid api key' });
+  const s = await db.getSession(session_id || '');
+  if (!s || s.business_id !== business.id) return res.status(404).json({ error: 'session not found' });
+  const test = await db.getRunningAbTest(business.id, String(trigger || ''));
+  if (!test) return res.json({ nudge: null, reason: 'no running A/B test for this trigger' });
+  if (await db.hasNudgeForTest(business.id, s.id, test.id)) {
+    return res.json({ nudge: null, reason: 'already nudged for this test' });
+  }
+  // stable variant assignment: hash(session_id + test.id) -> 0..99 < split ? b : a
+  const hash = require('crypto').createHash('sha256').update(`${s.id}:${test.id}`).digest();
+  const bucket = hash[0] % 100;
+  const variant = bucket < test.split ? 'b' : 'a';
+  const text = variant === 'b' ? test.variant_b : test.variant_a;
+  const nudge = await db.addNudge(business.id, s.id, text, { abTestId: test.id, variant });
+  res.json({ nudge: { id: nudge.id, text, variant }, test_id: test.id });
+});
+
 // ---------- auth ----------
 app.post('/api/auth/login', loginLimiter, async (req, res) => {
   const { username, password } = req.body || {};
@@ -858,7 +882,8 @@ admin.put('/settings', async (req, res) => {
     'whatsapp_enabled', 'whatsapp_phone_number_id', 'messenger_enabled', 'messenger_page_id',
     'instagram_enabled', 'instagram_page_id', 'instagram_access_token',
     'email_enabled', 'inbound_email', 'twilio_phone_number',
-    'actions_enabled', 'actions', 'refund_auto_approve_limit', 'action_webhook_url'];
+    'actions_enabled', 'actions', 'refund_auto_approve_limit', 'action_webhook_url',
+    'autonomy'];
   const b = await db.getBusinessById(req.businessId);
   const next = { ...b.settings };
   for (const k of allowed) if (req.body[k] !== undefined) next[k] = req.body[k];
@@ -1055,6 +1080,146 @@ admin.delete('/webhooks/:id', async (req, res) => {
 admin.post('/webhooks/:id/toggle', async (req, res) => {
   await db.setWebhookEndpointActive(req.params.id, req.businessId, !!(req.body && req.body.active));
   res.json({ ok: true });
+});
+
+// ---------- QA playground: run scripted test conversations ----------
+// POST /api/admin/qa/run { name?, script: [{message, expect_contains?}] }
+// Each step runs through the real chat engine in test mode (no webhooks,
+// no tickets, sessions flagged is_test so analytics stay clean).
+admin.post('/qa/run', async (req, res) => {
+  const { name, script, save = true } = req.body || {};
+  if (!Array.isArray(script) || !script.length || script.length > 30) {
+    return res.status(400).json({ error: 'script must be an array of 1-30 {message, expect_contains?} steps' });
+  }
+  const business = await db.getBusinessById(req.businessId);
+  let sessionId = null;
+  const results = [];
+  try {
+    for (const step of script.slice(0, 30)) {
+      const msg = String((step && step.message) || '').slice(0, 1000);
+      if (!msg) continue;
+      const out = await processMessage({ business, sessionId, text: msg, isTest: true });
+      sessionId = out.sessionId;
+      const expect = String((step && step.expect_contains) || '').trim();
+      const pass = !expect || (out.reply || '').toLowerCase().includes(expect.toLowerCase());
+      results.push({ message: msg, reply: out.reply, type: out.type, expect_contains: expect, pass });
+    }
+  } catch (err) {
+    console.error('[qa] run failed:', err.message);
+    return res.status(500).json({ error: 'QA run failed: ' + err.message });
+  }
+  const run = save ? await db.createQaRun(req.businessId, { name: name || '', script, results }) : null;
+  res.json({ run, results, passed: results.filter((r) => r.pass).length, total: results.length, session_id: sessionId });
+});
+admin.get('/qa/runs', async (req, res) => res.json(await db.listQaRuns(req.businessId)));
+admin.get('/qa/runs/:id', async (req, res) => {
+  const run = await db.getQaRun(req.params.id, req.businessId);
+  if (!run) return res.status(404).json({ error: 'not found' });
+  res.json(run);
+});
+admin.delete('/qa/runs/:id', async (req, res) => {
+  await db.deleteQaRun(req.params.id, req.businessId);
+  res.json({ ok: true });
+});
+// Re-run a saved regression script against the current bot.
+admin.post('/qa/runs/:id/rerun', async (req, res) => {
+  const prev = await db.getQaRun(req.params.id, req.businessId);
+  if (!prev) return res.status(404).json({ error: 'not found' });
+  let script = [];
+  try { script = JSON.parse(prev.script || '[]'); } catch {}
+  const business = await db.getBusinessById(req.businessId);
+  let sessionId = null;
+  const results = [];
+  for (const step of script.slice(0, 30)) {
+    const msg = String((step && step.message) || '').slice(0, 1000);
+    if (!msg) continue;
+    const out = await processMessage({ business, sessionId, text: msg, isTest: true });
+    sessionId = out.sessionId;
+    const expect = String((step && step.expect_contains) || '').trim();
+    results.push({ message: msg, reply: out.reply, type: out.type, expect_contains: expect,
+      pass: !expect || (out.reply || '').toLowerCase().includes(expect.toLowerCase()) });
+  }
+  const run = await db.createQaRun(req.businessId, { name: (prev.name || '') + ' (re-run)', script, results });
+  res.json({ run, results, passed: results.filter((r) => r.pass).length, total: results.length });
+});
+
+// ---------- A/B tests for proactive nudge triggers ----------
+admin.get('/ab-tests', async (req, res) => res.json(await db.listAbTests(req.businessId)));
+admin.post('/ab-tests', async (req, res) => {
+  try {
+    res.status(201).json(await db.createAbTest(req.businessId, req.body || {}));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+admin.get('/ab-tests/:id/stats', async (req, res) => {
+  const stats = await db.abTestStats(req.businessId, req.params.id);
+  if (!stats) return res.status(404).json({ error: 'not found' });
+  res.json(stats);
+});
+admin.put('/ab-tests/:id', async (req, res) => {
+  try {
+    res.json(await db.updateAbTest(req.params.id, req.businessId, req.body || {}));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+admin.delete('/ab-tests/:id', async (req, res) => {
+  await db.deleteAbTest(req.params.id, req.businessId);
+  res.json({ ok: true });
+});
+
+// ---------- Help-center articles ----------
+admin.get('/articles', async (req, res) => res.json(await db.listArticles(req.businessId)));
+admin.post('/articles', async (req, res) => {
+  try {
+    const body = { ...(req.body || {}) };
+    if (body.status !== undefined && body.published === undefined) body.published = body.status === 'published';
+    res.status(201).json(await db.createArticle(req.businessId, body));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+admin.get('/articles/:id', async (req, res) => {
+  const a = await db.getArticle(req.params.id, req.businessId);
+  if (!a) return res.status(404).json({ error: 'not found' });
+  res.json(a);
+});
+admin.put('/articles/:id', async (req, res) => {
+  const body = { ...(req.body || {}) };
+  if (body.status !== undefined && body.published === undefined) body.published = body.status === 'published';
+  const a = await db.updateArticle(req.params.id, req.businessId, body);
+  if (!a) return res.status(404).json({ error: 'not found' });
+  res.json(a);
+});
+admin.delete('/articles/:id', async (req, res) => {
+  await db.deleteArticle(req.params.id, req.businessId);
+  res.json({ ok: true });
+});
+// Auto-generate help articles from the business's FAQs (one article per FAQ;
+// uses the LLM when configured, otherwise clean templated markdown).
+admin.post('/articles/generate', async (req, res) => {
+  const business = await db.getBusinessById(req.businessId);
+  const faqs = await db.listFaqs(req.businessId);
+  if (!faqs.length) return res.status(400).json({ error: 'add some FAQs first — articles are generated from them' });
+  const made = [];
+  const llmCfg = llm.resolveConfig(business.settings || {});
+  for (const faq of faqs.slice(0, 50)) {
+    let body = '';
+    if (llmCfg.enabled) {
+      try {
+        body = await llm.chatComplete(llmCfg, [
+          { role: 'system', content: `Write a concise help-center article in Markdown for ${business.name}. Start with a "##" heading, then 2-4 short paragraphs, then a "### Quick answer" section with one sentence. No fluff.` },
+          { role: 'user', content: `Question: ${faq.question}\nAnswer: ${faq.answer}` },
+        ], { maxTokens: 600 });
+      } catch (e) { console.warn('[articles] LLM generate failed, using template:', e.message); }
+    }
+    if (!body) {
+      body = `## ${faq.question}\n\n${faq.answer}\n\n### Quick answer\n\n${faq.answer.split('.')[0]}.`;
+    }
+    made.push(await db.createArticle(req.businessId, { title: faq.question, body, source: `faq:${faq.id}` }));
+  }
+  res.json({ created: made.length, articles: made.map((a) => ({ id: a.id, title: a.title })) });
 });
 
 // Analytics
@@ -1259,6 +1424,28 @@ app.use('/admin', express.static(path.join(__dirname, 'public', 'admin')));
 app.use('/pricing', express.static(path.join(__dirname, 'public', 'pricing')));
 app.use('/security', express.static(path.join(__dirname, 'public', 'security')));
 app.use('/signup', express.static(path.join(__dirname, 'public', 'signup')));
+// Public help center: published articles for a business (Markdown -> simple HTML).
+app.get('/help/:businessId', async (req, res) => {
+  const business = await db.getBusinessById(req.params.businessId);
+  if (!business) return res.status(404).send('Help center not found');
+  const articles = await db.listArticles(business.id, { publishedOnly: true });
+  const esc = (t) => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const md = (t) => esc(t)
+    .replace(/^### (.*)$/gm, '<h3>$1</h3>').replace(/^## (.*)$/gm, '<h2>$1</h2>').replace(/^# (.*)$/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>');
+  const list = articles.map((a) => `<li><a href="#a${a.id}">${esc(a.title)}</a></li>`).join('');
+  const bodies = (await Promise.all(articles.map(async (a) => {
+    const full = await db.getArticle(a.id, business.id);
+    return `<article id="a${a.id}"><h2>${esc(full.title)}</h2><p>${md(full.body)}</p></article>`;
+  }))).join('\n');
+  res.send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Help center — ${esc(business.name)}</title>
+<style>body{font-family:system-ui,sans-serif;max-width:720px;margin:2rem auto;padding:0 1rem;line-height:1.6;color:#1a1a1a}
+article{border-top:1px solid #eee;margin-top:2rem;padding-top:1rem}a{color:#2563eb}</style></head>
+<body><h1>${esc(business.name)} — Help center</h1>
+${articles.length ? `<ul>${list}</ul>${bodies}` : '<p>No help articles published yet.</p>'}</body></html>`);
+});
+
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 app.listen(PORT, () => {
