@@ -19,6 +19,7 @@ const session = require('express-session');
 const db = require('./lib/db');
 const { processMessage } = require('./lib/bot');
 const channels = require('./lib/channels');
+const llm = require('./lib/llm');
 const { createLimiter } = require('./lib/ratelimit');
 const { encryptSecret, encryptionEnabled } = require('./lib/crypto');
 const crawl = require('./lib/crawl');
@@ -35,7 +36,29 @@ if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
 // verified against the raw body bytes (Stripe requires the exact payload).
 app.post('/api/billing/webhook', express.raw({ type: '*/*', limit: '2mb' }), billingWebhook);
 
+// Shopify order webhook — raw body needed for HMAC verification.
+app.post('/api/integrations/shopify/webhook/orders', express.raw({ type: '*/*', limit: '2mb' }), async (req, res) => {
+  const shopify = require('./lib/shopify');
+  res.sendStatus(200); // ack immediately; process best-effort below
+  try {
+    const hmac = req.get('X-Shopify-Hmac-Sha256') || '';
+    if (!shopify.verifyWebhookHmac(req.body, hmac)) { console.warn('[shopify] webhook HMAC mismatch'); return; }
+    const shopDomain = req.get('X-Shopify-Shop-Domain') || '';
+    const topic = req.get('X-Shopify-Topic') || '';
+    if (!/orders\//.test(topic)) return;
+    const shop = await db.getShopByDomain(shopDomain);
+    if (!shop) { console.warn('[shopify] order webhook for unknown shop:', shopDomain); return; }
+    const payload = JSON.parse(req.body.toString('utf8'));
+    const mapped = shopify.mapShopifyOrder(payload);
+    if (!mapped.order_number) return;
+    await db.upsertOrder(shop.business_id, mapped);
+  } catch (err) {
+    console.error('[shopify] webhook error:', err.message);
+  }
+});
+
 app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: false, limit: '1mb' })); // Twilio posts form-encoded
 app.use(session({
   secret: SESSION_SECRET,
   resave: false,
@@ -97,6 +120,12 @@ const nudgeLimiter = createLimiter({
 const channelLimiter = createLimiter({
   max: envInt('RATE_LIMIT_CHANNEL_PER_MIN', 120),
   keyFn: (req) => `chan:${req.ip}`,
+});
+// Public signup (free trial provisioning); strict to deter bot farms.
+const signupLimiter = createLimiter({
+  max: envInt('RATE_LIMIT_SIGNUP_PER_MIN', 5),
+  keyFn: (req) => `signup:${req.ip}`,
+  message: 'too many signups, please try again later',
 });
 
 // ---------- origin allowlist for the widget config ----------
@@ -259,6 +288,151 @@ app.post('/api/channels/messenger/webhook', channelLimiter, async (req, res) => 
   }
 });
 
+// ---------- Instagram DM webhooks ----------
+// Meta delivers Instagram messaging events to the same app webhook; the
+// sender id is the Instagram-scoped ID (IGSID). Connect the Instagram
+// business account to the Facebook Page, subscribe the app to the
+// `messages` webhook field, and set META_VERIFY_TOKEN / META_INSTAGRAM_TOKEN.
+app.get('/api/channels/instagram/webhook', channelLimiter, (req, res) => {
+  const verifyToken = process.env.META_VERIFY_TOKEN || '';
+  if (!verifyToken || req.query['hub.mode'] !== 'subscribe' || req.query['hub.verify_token'] !== verifyToken) {
+    return res.sendStatus(403);
+  }
+  res.status(200).send(req.query['hub.challenge'] || '');
+});
+app.post('/api/channels/instagram/webhook', channelLimiter, async (req, res) => {
+  res.sendStatus(200); // ack immediately; process best-effort below
+  try {
+    for (const entry of (req.body && req.body.entry) || []) {
+      for (const m of entry.messaging || []) {
+        const igsid = m.sender && m.sender.id;
+        const text = m.message && m.message.text;
+        if (!igsid || !text || (m.message && m.message.is_echo)) continue; // skip our own echoes
+        const business = await db.findBusinessBySetting('instagram_page_id', entry.id)
+          || await db.findBusinessBySetting('messenger_page_id', entry.id);
+        if (!business) { console.warn('[channels] Instagram message for unknown page id'); continue; }
+        if (business.settings.instagram_enabled === false) continue;
+        await channels.handleChannelMessage(business, 'instagram', String(igsid), text);
+      }
+    }
+  } catch (err) {
+    console.error('[channels] Instagram webhook error:', err.message);
+  }
+});
+
+// ---------- inbound email triage ----------
+// POST /api/channels/email/inbound  { from, to, subject, text }
+// Point SendGrid Inbound Parse / Mailgun Routes / any forwarder at this URL.
+// `to` must match the business's `inbound_email` setting (set in admin).
+// Protected by EMAIL_INBOUND_SECRET (header X-Inbound-Secret).
+app.post('/api/channels/email/inbound', channelLimiter, async (req, res) => {
+  const secret = process.env.EMAIL_INBOUND_SECRET || '';
+  if (!secret || req.get('X-Inbound-Secret') !== secret) return res.sendStatus(403);
+  res.sendStatus(200); // ack immediately; process best-effort below
+  try {
+    const { from, to, subject, text } = req.body || {};
+    const fromAddr = String(from || '').trim();
+    const toAddr = String(to || '').trim().toLowerCase();
+    const body = String(text || '').trim();
+    if (!fromAddr || !toAddr || !body) return;
+    if (/mailer-daemon|postmaster|auto-?reply/i.test(fromAddr)) return; // loop protection
+    const business = await db.findBusinessBySetting('inbound_email', toAddr);
+    if (!business) { console.warn('[channels] email for unknown inbound address'); return; }
+    if (business.settings.email_enabled === false) return;
+    let session = await db.findSessionByChannel(business.id, 'email', fromAddr);
+    if (!session) {
+      session = await db.createSession(business.id, fromAddr, { channel: 'email', channelSender: fromAddr });
+    }
+    const result = await processMessage({ business, sessionId: session.id, text: body, visitorLabel: fromAddr });
+    const subj = 'Re: ' + String(subject || '(no subject)').replace(/^Re:\s*/i, '').slice(0, 120);
+    await channels.sendEmailText(business, fromAddr, subj, result.reply);
+  } catch (err) {
+    console.error('[channels] email inbound error:', err.message);
+  }
+});
+
+// Shopify OAuth callback (public URL registered in the Shopify app settings)
+app.get('/api/integrations/shopify/callback', async (req, res) => {
+  const shopify = require('./lib/shopify');
+  try {
+    const saved = req.session && req.session.shopify_oauth;
+    if (req.session) delete req.session.shopify_oauth;
+    if (!saved || !shopify.verifyQueryHmac(req.query) || req.query.state !== saved.state) {
+      return res.status(400).send('Shopify authorization could not be verified. Please retry from the admin panel.');
+    }
+    const shop = shopify.normalizeShop(req.query.shop);
+    if (!shop || shop !== saved.shop) return res.status(400).send('Shop mismatch — please retry.');
+    const tokenRes = await fetch(`https://${shop}/admin/oauth/access_token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: process.env.SHOPIFY_API_KEY,
+        client_secret: process.env.SHOPIFY_API_SECRET,
+        code: req.query.code,
+      }),
+    });
+    if (!tokenRes.ok) return res.status(502).send('Could not complete Shopify authorization. Please try again.');
+    const { access_token, scope } = await tokenRes.json();
+    await db.upsertShop(saved.businessId, shop, shopify.encryptShopToken(access_token), scope || '');
+    await shopify.registerOrderWebhook(shop, access_token, `${shopify.appUrl(req)}/api/integrations/shopify/webhook/orders`);
+    res.redirect('/admin/#integrations?shopify=connected');
+  } catch (err) {
+    console.error('[shopify] callback error:', err.message);
+    res.status(500).send('Shopify connection failed — please try again.');
+  }
+});
+
+// ---------- AI phone calls (Twilio Programmable Voice) ----------
+// Point a Twilio phone number's voice webhook at /api/voice/twilio/incoming
+// (HTTP POST). The caller talks; the bot answers from the same knowledge base.
+app.post('/api/voice/twilio/incoming', channelLimiter, async (req, res) => {
+  const voice = require('./lib/voice');
+  try {
+    if (!voice.validTwilioSignature(req)) return res.sendStatus(403);
+    const to = String(req.body.To || '').trim();
+    const business = to ? await db.findBusinessBySetting('twilio_phone_number', to) : null;
+    const base = `${req.protocol}://${req.get('host')}`;
+    res.type('text/xml');
+    if (!business) {
+      return res.send(voice.rejectTwiml('Sorry, this number is not configured for automated support yet. Goodbye.'));
+    }
+    const name = (business.settings && business.settings.bot_name) || business.name || 'our support assistant';
+    const greeting = `Hi, thanks for calling ${business.name}. I'm ${name}. How can I help you today?`;
+    res.send(voice.gatherTwiml(greeting, `${base}/api/voice/twilio/respond`));
+  } catch (err) {
+    console.error('[voice] incoming error:', err.message);
+    res.sendStatus(500);
+  }
+});
+app.post('/api/voice/twilio/respond', channelLimiter, async (req, res) => {
+  const voice = require('./lib/voice');
+  try {
+    if (!voice.validTwilioSignature(req)) return res.sendStatus(403);
+    const to = String(req.body.To || '').trim();
+    const from = String(req.body.From || '').trim();
+    const speech = String(req.body.SpeechResult || '').trim();
+    const business = to ? await db.findBusinessBySetting('twilio_phone_number', to) : null;
+    const base = `${req.protocol}://${req.get('host')}`;
+    res.type('text/xml');
+    if (!business || !from) {
+      return res.send(voice.rejectTwiml('Sorry, something went wrong. Goodbye.'));
+    }
+    let session = await db.findSessionByChannel(business.id, 'voice', from);
+    if (!session) {
+      session = await db.createSession(business.id, from, { channel: 'voice', channelSender: from });
+    }
+    const text = speech || 'hello';
+    const result = await processMessage({ business, sessionId: session.id, text, visitorLabel: from });
+    // Strip markdown-ish formatting so it reads naturally over the phone.
+    const spoken = String(result.reply || '').replace(/[*_`#>\[\]()]/g, '').replace(/\s+/g, ' ').trim().slice(0, 900)
+      || 'I had trouble with that. Please try again or ask for a human agent.';
+    res.send(voice.sayTwiml(spoken, `${base}/api/voice/twilio/respond`));
+  } catch (err) {
+    console.error('[voice] respond error:', err.message);
+    res.sendStatus(500);
+  }
+});
+
 // ---------- order webhook (documented interface for real stores) ----------
 // POST /api/webhook/orders
 //   Headers: X-Webhook-Secret: wh_...   (per-business secret, shown once at
@@ -315,6 +489,9 @@ app.get('/api/billing/checkout', async (req, res) => {
   const adminUsername = String(req.query.admin_username || '').trim();
   if (!businessName || !adminUsername)
     return res.status(400).json({ error: 'business_name and admin_username are required' });
+  // Trial upgrade: pass business_id to convert an existing trial instead of
+  // provisioning a brand-new business.
+  const upgradeId = String(req.query.business_id || '').trim();
   try {
     const stripe = getStripe();
     const base = `${req.protocol}://${req.get('host')}`;
@@ -332,7 +509,7 @@ app.get('/api/billing/checkout', async (req, res) => {
       ],
       success_url: `${base}/pricing/success.html?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${base}/pricing/`,
-      metadata: { plan: req.query.plan, business_name: businessName, admin_username: adminUsername },
+      metadata: { plan: req.query.plan, business_name: businessName, admin_username: adminUsername, business_id: upgradeId || '' },
     });
     res.redirect(303, session.url);
   } catch (err) {
@@ -355,6 +532,20 @@ async function provisionFromCheckout(s) {
     return null;
   }
   const plan = (s.metadata && s.metadata.plan) || 'starter';
+  // Trial upgrade: convert the existing trial business instead of creating one.
+  const upgradeId = s.metadata && s.metadata.business_id;
+  if (upgradeId) {
+    const existingBiz = await db.getBusinessById(upgradeId);
+    if (existingBiz) {
+      const next = { ...(existingBiz.settings || {}), plan,
+        stripe_session_id: s.id, stripe_customer_id: s.customer || null,
+        stripe_subscription_id: s.subscription || null };
+      delete next.trial_ends_at;
+      await db.updateBusinessSettings(existingBiz.id, next);
+      console.log(`[billing] upgraded trial business "${existingBiz.name}" (${existingBiz.id}) to ${plan}`);
+      return { upgraded: true, businessId: existingBiz.id, stripeSessionId: s.id };
+    }
+  }
   const name = (s.metadata && s.metadata.business_name) || 'New Business';
   const username = (s.metadata && s.metadata.admin_username) ||
     ('admin-' + crypto.randomBytes(3).toString('hex'));
@@ -402,7 +593,12 @@ async function billingWebhook(req, res) {
 // credentials, then deletes the row so they can never be read again.
 app.get('/api/billing/success', async (req, res) => {
   const prov = await db.getProvision(req.query.session_id || '');
-  if (!prov) return res.status(404).json({ error: 'no pending credentials for this session' });
+  if (!prov) {
+    // Trial upgrade: no new credentials were issued; confirm the upgrade.
+    const biz = await db.getBusinessByStripeSession(req.query.session_id || '');
+    if (biz) return res.json({ upgraded: true, business_name: biz.name, plan: (biz.settings || {}).plan || '', admin_url: `${req.protocol}://${req.get('host')}/admin/` });
+    return res.status(404).json({ error: 'no pending credentials for this session' });
+  }
   const biz = await db.getBusinessById(prov.business_id);
   await db.deleteProvision(prov.stripe_session_id);
   res.json({
@@ -415,6 +611,78 @@ app.get('/api/billing/success', async (req, res) => {
 });
 // Customer billing portal (admin session required, business-scoped).
 // (route defined on the admin router, below)
+
+// ---------- free trial signup ----------
+// POST /api/signup {name, email, business_name, website?, plan?}
+// Provisions a 14-day trial business + admin login. No card required.
+app.post('/api/signup', signupLimiter, async (req, res) => {
+  const name = String((req.body && req.body.name) || '').trim().slice(0, 80);
+  const email = String((req.body && req.body.email) || '').trim().toLowerCase().slice(0, 160);
+  const businessName = String((req.body && req.body.business_name) || '').trim().slice(0, 120);
+  let website = String((req.body && req.body.website) || '').trim().slice(0, 300);
+  const planChoice = ['starter', 'growth', 'scale'].includes(req.body && req.body.plan) ? req.body.plan : 'starter';
+  if (!name || !businessName) return res.status(400).json({ error: 'name and business_name are required' });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'a valid email is required' });
+  if (website && !/^https?:\/\//i.test(website)) website = 'https://' + website;
+  if (website) {
+    try {
+      const u = new URL(website);
+      if (!['http:', 'https:'].includes(u.protocol)) throw new Error('bad protocol');
+    } catch { return res.status(400).json({ error: 'website URL looks invalid' }); }
+  }
+  try {
+    const business = await db.createBusiness({
+      name: businessName,
+      settings: {
+        plan: 'trial', trial_plan: planChoice, trial_ends_at: Date.now() + 14 * 864e5,
+        contact_name: name, contact_email: email, website: website || '',
+      },
+    });
+    const username = 'admin-' + crypto.randomBytes(3).toString('hex');
+    const password = 'cb-' + crypto.randomBytes(8).toString('hex');
+    await db.createAdmin(business.id, username, password);
+    const token = crypto.randomBytes(16).toString('hex');
+    await db.addProvision({ stripeSessionId: 'signup:' + token, businessId: business.id, adminUsername: username, adminPassword: password });
+    // Seed a starter FAQ and crawl their website in the background so the
+    // trial bot knows something on day one.
+    db.addFaq(business.id,
+      `What does ${businessName} do?`,
+      `Thanks for asking! This is a starter answer created during your free trial — replace it in the admin Knowledge Base with what your business actually does.`,
+      businessName.toLowerCase()).catch(() => {});
+    if (website) {
+      (async () => {
+        try {
+          const pages = await crawl.crawlSite(website, { maxPages: 20 });
+          const stored = await crawl.ingestPages(business, pages);
+          console.log(`[signup] business ${business.id}: ${pages.length} pages crawled, ${stored} documents stored`);
+        } catch (err) { console.error('[signup] crawl failed:', err.message); }
+      })();
+    }
+    console.log(`[signup] trial business "${businessName}" (${business.id}) for ${email}`);
+    res.json({ ok: true, token });
+  } catch (err) {
+    console.error('[signup] failed:', err.message);
+    res.status(500).json({ error: 'signup failed, please try again' });
+  }
+});
+// One-time credential handoff for the signup success page.
+app.get('/api/signup/success', async (req, res) => {
+  const token = String(req.query.token || '');
+  if (!token) return res.status(400).json({ error: 'token is required' });
+  const prov = await db.getProvision('signup:' + token);
+  if (!prov) return res.status(404).json({ error: 'no pending credentials for this signup' });
+  const biz = await db.getBusinessById(prov.business_id);
+  await db.deleteProvision(prov.stripe_session_id);
+  const base = `${req.protocol}://${req.get('host')}`;
+  res.json({
+    business_name: biz ? biz.name : '',
+    admin_username: prov.admin_username,
+    admin_password: prov.admin_password,
+    api_key: biz ? biz.api_key : '',
+    admin_url: `${base}/admin/`,
+    embed_snippet: `<script src="${base}/widget/widget.js" data-key="${biz ? biz.api_key : ''}" async></script>`,
+  });
+});
 
 // ---------- public widget endpoints: feedback + nudges ----------
 // POST /api/feedback  {api_key, session_id, message_id, rating} — CSAT thumbs vote.
@@ -521,6 +789,45 @@ admin.delete('/documents/:id', async (req, res) => {
 });
 
 // Settings (secrets are never returned in full — see flags below)
+// ---------- Shopify OAuth (native app-style install) ----------
+// 1. Logged-in admin visits /api/admin/integrations/shopify/install?shop=mystore.myshopify.com
+// 2. We redirect to Shopify OAuth; the callback below stores the access token
+//    (encrypted) and registers the orders/create webhook.
+admin.get('/integrations/shopify/install', async (req, res) => {
+  const shopify = require('./lib/shopify');
+  if (!shopify.shopifyConfigured()) {
+    return res.status(503).json({ error: 'Shopify integration not configured (SHOPIFY_API_KEY / SHOPIFY_API_SECRET).' });
+  }
+  const shop = shopify.normalizeShop(req.query.shop);
+  if (!shop) return res.status(400).json({ error: 'valid ?shop=mystore.myshopify.com required' });
+  const state = crypto.randomBytes(16).toString('hex');
+  req.session.shopify_oauth = { state, businessId: req.businessId, shop };
+  const params = new URLSearchParams({
+    client_id: process.env.SHOPIFY_API_KEY,
+    scope: 'read_orders,read_products',
+    redirect_uri: `${shopify.appUrl(req)}/api/integrations/shopify/callback`,
+    state,
+    'grant_options[]': 'per-user',
+  });
+  res.redirect(`https://${shop}/admin/oauth/authorize?${params.toString()}`);
+});
+admin.get('/integrations', async (req, res) => {
+  const shopify = require('./lib/shopify');
+  res.json({
+    shopify_configured: shopify.shopifyConfigured(),
+    shops: await db.listShops(req.businessId),
+    channels: {
+      whatsapp: channels.whatsappConfigured(),
+      messenger: channels.messengerConfigured(),
+      instagram: channels.instagramConfigured(),
+      email: channels.emailConfigured(),
+    },
+  });
+});
+admin.delete('/integrations/shopify/:id', async (req, res) => {
+  await db.deleteShop(req.params.id, req.businessId);
+  res.json({ ok: true });
+});
 admin.get('/settings', async (req, res) => {
   const b = await db.getBusinessById(req.businessId);
   const s = { ...b.settings };
@@ -530,11 +837,14 @@ admin.get('/settings', async (req, res) => {
   const actionSecretSet = !!(s.action_webhook_secret || s.action_webhook_secret_enc);
   delete s.action_webhook_secret;
   delete s.action_webhook_secret_enc;
+  const igTokenSet = !!s.instagram_access_token;
+  delete s.instagram_access_token;
   res.json({
     name: b.name, ...s,
     llm_api_key_set: llmKeySet,
     llm_encryption_on: encryptionEnabled(),
     action_webhook_secret_set: actionSecretSet,
+    instagram_access_token_set: igTokenSet,
     webhook_secret_set: !!b.webhook_secret_hash,
     whatsapp_token_set: channels.whatsappConfigured(),
     messenger_token_set: channels.messengerConfigured(),
@@ -545,6 +855,8 @@ admin.put('/settings', async (req, res) => {
     'lead_capture_enabled', 'llm_enabled', 'llm_base_url', 'llm_model', 'allowed_origins',
     'default_language', 'auto_translate', 'voice_enabled',
     'whatsapp_enabled', 'whatsapp_phone_number_id', 'messenger_enabled', 'messenger_page_id',
+    'instagram_enabled', 'instagram_page_id', 'instagram_access_token',
+    'email_enabled', 'inbound_email', 'twilio_phone_number',
     'actions_enabled', 'actions', 'refund_auto_approve_limit', 'action_webhook_url'];
   const b = await db.getBusinessById(req.businessId);
   const next = { ...b.settings };
@@ -613,9 +925,18 @@ admin.get('/leads', async (req, res) => {
   res.json(leads);
 });
 
-// Sessions / transcripts
+// Sessions / transcripts (+ CSV export)
 admin.get('/sessions', async (req, res) => {
-  res.json(await db.listSessions(req.businessId, { flaggedOnly: req.query.flagged === '1' }));
+  const sessions = await db.listSessions(req.businessId, { flaggedOnly: req.query.flagged === '1' });
+  if (req.query.format === 'csv') {
+    const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const rows = [['id', 'created_at', 'channel', 'visitor_label', 'language'],
+      ...sessions.map(s => [s.id, new Date(s.created_at).toISOString(), s.channel || 'web', s.visitor_label || '', s.language || ''])];
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="conversations.csv"');
+    return res.send(rows.map(r => r.map(esc).join(',')).join('\n'));
+  }
+  res.json(sessions);
 });
 admin.get('/sessions/:id', async (req, res) => {
   const s = await db.getSession(req.params.id);
@@ -670,6 +991,22 @@ admin.delete('/orders/:id', async (req, res) => {
 });
 
 // Analytics
+// Account: plan + trial status for the admin banner / upgrade CTA.
+admin.get('/account', async (req, res) => {
+  const b = await db.getBusinessById(req.businessId);
+  const s = (b && b.settings) || {};
+  const trialEnds = s.trial_ends_at || 0;
+  res.json({
+    business_name: b ? b.name : '',
+    plan: s.plan || 'starter',
+    trial: s.plan === 'trial',
+    trial_ends_at: trialEnds,
+    trial_plan: s.trial_plan || null,
+    trial_days_left: s.plan === 'trial' ? Math.max(0, Math.ceil((trialEnds - Date.now()) / 864e5)) : null,
+    billing_configured: billingConfigured(),
+  });
+});
+
 admin.get('/analytics', async (req, res) => {
   const biz = req.businessId;
   res.json({
@@ -679,7 +1016,15 @@ admin.get('/analytics', async (req, res) => {
     resolution: await db.resolutionStats(biz, 30),
     csat: await db.feedbackStats(biz, 14),
     funnel: await db.funnelStats(biz, 30),
+    channels: await db.channelStats(biz, 30),
+    ai_usage: await llm.getAiUsageSummary({ id: biz, settings: (await db.getBusinessById(biz)).settings }),
   });
+});
+
+// Platform AI usage detail (metered messages/tokens vs plan cap).
+admin.get('/ai-usage', async (req, res) => {
+  const b = await db.getBusinessById(req.businessId);
+  res.json(await llm.getAiUsageSummary(b));
 });
 
 // Proactive messaging (nudges)
@@ -761,6 +1106,8 @@ app.use('/widget', express.static(path.join(__dirname, 'public', 'widget')));
 app.use('/demo', express.static(path.join(__dirname, 'public', 'demo')));
 app.use('/admin', express.static(path.join(__dirname, 'public', 'admin')));
 app.use('/pricing', express.static(path.join(__dirname, 'public', 'pricing')));
+app.use('/security', express.static(path.join(__dirname, 'public', 'security')));
+app.use('/signup', express.static(path.join(__dirname, 'public', 'signup')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 app.listen(PORT, () => {

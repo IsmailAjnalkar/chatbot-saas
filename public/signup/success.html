@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>You're in! — ChatbotReply</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f0d2e; color: #fff; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .card { background: #1a1745; border: 1px solid #2d2870; border-radius: 20px; padding: 40px; max-width: 560px; width: 100%; box-shadow: 0 24px 80px rgba(0,0,0,.5); }
+  h1 { font-size: 28px; margin-bottom: 8px; }
+  p.sub { color: #b8b3e0; margin-bottom: 24px; }
+  .row { background: #12103a; border: 1px solid #2d2870; border-radius: 10px; padding: 12px 14px; margin: 10px 0; font-size: 14px; }
+  .row b { color: #b8b3e0; display: block; font-size: 12px; margin-bottom: 4px; font-weight: 600; }
+  .row code { font-size: 15px; word-break: break-all; }
+  pre { background: #0a0925; border: 1px solid #2d2870; border-radius: 10px; padding: 14px; font-size: 12px; overflow-x: auto; margin: 10px 0; white-space: pre-wrap; word-break: break-all; }
+  .btn { display: block; text-align: center; margin-top: 20px; padding: 15px; border-radius: 12px; background: linear-gradient(135deg, #6c63ff, #a855f7); color: #fff; font-size: 16px; font-weight: 700; text-decoration: none; }
+  .warn { margin-top: 16px; font-size: 13px; color: #fbbf24; background: #3a2a10; border: 1px solid #6b4e16; padding: 12px; border-radius: 10px; }
+  .err { display: none; background: #4c1d1d; border: 1px solid #7f2d2d; color: #fca5a5; padding: 14px; border-radius: 10px; font-size: 14px; }
+  .steps { margin: 20px 0 0 20px; color: #b8b3e0; font-size: 14px; }
+  .steps li { margin: 8px 0; }
+</style>
+</head>
+<body>
+<div class="card" id="panel" style="display:none">
+  <h1>🎉 Your chatbot is ready!</h1>
+  <p class="sub">Save these credentials — they're shown <b>exactly once</b>.</p>
+  <div class="row"><b>Admin username</b><code id="c-user">—</code></div>
+  <div class="row"><b>Admin password</b><code id="c-pass">—</code></div>
+  <div class="row"><b>Widget API key</b><code id="c-key">—</code></div>
+  <div class="row"><b>Embed on your site</b><pre id="c-snippet">—</pre></div>
+  <ol class="steps">
+    <li>Paste the embed snippet before <code>&lt;/body&gt;</code> on your site.</li>
+    <li>Open your <b>admin dashboard</b> to add FAQs or import your website.</li>
+    <li>If you gave us your website, we're importing it right now — check back in a few minutes.</li>
+  </ol>
+  <a class="btn" id="admin-link" href="/admin/">Open admin dashboard →</a>
+  <div class="warn">⏳ Your free trial lasts 14 days. You can upgrade anytime from the dashboard — no card required until then.</div>
+</div>
+<div class="card err" id="error-panel"><span id="error-text"></span></div>
+<script>
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  var token = params.get('token');
+  if (!token) return showError('Missing signup token.');
+  fetch('/api/signup/success?token=' + encodeURIComponent(token))
+    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function (c) {
+      document.getElementById('c-user').textContent = c.admin_username || '—';
+      document.getElementById('c-pass').textContent = c.admin_password || '—';
+      document.getElementById('c-key').textContent = c.api_key || '—';
+      document.getElementById('c-snippet').textContent = c.embed_snippet || '—';
+      document.getElementById('admin-link').href = c.admin_url || '/admin/';
+      document.getElementById('panel').style.display = 'block';
+    })
+    .catch(function () { showError('These credentials were already shown (or never existed). They are displayed exactly once for security.'); });
+  function showError(msg) {
+    document.getElementById('error-text').textContent = msg;
+    document.getElementById('error-panel').style.display = 'block';
+  }
+})();
+</script>
+</body>
+</html>

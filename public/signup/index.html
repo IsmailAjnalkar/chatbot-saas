@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Start your free trial — ChatbotReply</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f0d2e; color: #fff; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .card { background: #1a1745; border: 1px solid #2d2870; border-radius: 20px; padding: 40px; max-width: 480px; width: 100%; box-shadow: 0 24px 80px rgba(0,0,0,.5); }
+  h1 { font-size: 28px; margin-bottom: 8px; }
+  p.sub { color: #b8b3e0; margin-bottom: 28px; }
+  label { display: block; font-size: 13px; color: #b8b3e0; margin: 16px 0 6px; }
+  input, select { width: 100%; padding: 13px 14px; border-radius: 10px; border: 1px solid #2d2870; background: #12103a; color: #fff; font-size: 15px; }
+  input:focus, select:focus { outline: none; border-color: #6c63ff; }
+  button { width: 100%; margin-top: 24px; padding: 15px; border: none; border-radius: 12px; background: linear-gradient(135deg, #6c63ff, #a855f7); color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: wait; }
+  .err { display: none; background: #4c1d1d; border: 1px solid #7f2d2d; color: #fca5a5; padding: 12px; border-radius: 10px; margin-top: 16px; font-size: 14px; }
+  .fine { margin-top: 18px; font-size: 13px; color: #8f8ab8; text-align: center; }
+  .back { display: block; text-align: center; margin-top: 14px; color: #8f8ab8; font-size: 14px; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🚀 Start your free trial</h1>
+  <p class="sub">14 days free. No credit card. Your AI chatbot is ready in minutes.</p>
+  <form id="f">
+    <label for="name">Your name</label>
+    <input id="name" required maxlength="80" placeholder="Jane Smith" autocomplete="name">
+    <label for="email">Work email</label>
+    <input id="email" type="email" required maxlength="160" placeholder="jane@yourstore.com" autocomplete="email">
+    <label for="biz">Business name</label>
+    <input id="biz" required maxlength="120" placeholder="Acme Store" autocomplete="organization">
+    <label for="site">Website <span style="opacity:.6">(we'll auto-import your content)</span></label>
+    <input id="site" maxlength="300" placeholder="https://yourstore.com" inputmode="url">
+    <label for="plan">Plan to try</label>
+    <select id="plan">
+      <option value="starter">Starter — $99/mo after trial</option>
+      <option value="growth">Growth — $199/mo after trial</option>
+      <option value="scale">Scale — $399/mo after trial</option>
+    </select>
+    <button id="go" type="submit">Create my chatbot →</button>
+    <div class="err" id="err"></div>
+  </form>
+  <p class="fine">Free for 14 days · Cancel anytime · No card required</p>
+  <a class="back" href="/pricing/">← Compare plans</a>
+</div>
+<script>
+(function () {
+  var q = new URLSearchParams(window.location.search).get('plan');
+  if (['starter', 'growth', 'scale'].indexOf(q) >= 0) document.getElementById('plan').value = q;
+})();
+document.getElementById('f').addEventListener('submit', async function (e) {
+  e.preventDefault();
+  var go = document.getElementById('go'), err = document.getElementById('err');
+  err.style.display = 'none'; go.disabled = true; go.textContent = 'Creating your chatbot…';
+  try {
+    var r = await fetch('/api/signup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: document.getElementById('name').value,
+        email: document.getElementById('email').value,
+        business_name: document.getElementById('biz').value,
+        website: document.getElementById('site').value,
+        plan: document.getElementById('plan').value
+      })
+    });
+    var j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Signup failed');
+    location.href = '/signup/success.html?token=' + encodeURIComponent(j.token);
+  } catch (ex) {
+    err.textContent = ex.message; err.style.display = 'block';
+    go.disabled = false; go.textContent = 'Create my chatbot →';
+  }
+});
+</script>
+</body>
+</html>

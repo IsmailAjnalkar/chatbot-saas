@@ -37,6 +37,13 @@
     </div>
     <p class="muted small" style="margin-top:16px">Next: sign in with the admin credentials, change the password (Settings tab), and paste the embed snippet from the admin dashboard into your website.</p>
   </section>
+  <section class="panel" id="upgraded-panel" style="display:none">
+    <h2 style="margin-bottom:12px">🎉 Trial upgraded!</h2>
+    <p class="muted" id="upgraded-text">Your free trial is now a paid plan. Your chatbot, FAQs, and settings are unchanged — just keep using your existing admin login.</p>
+    <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap">
+      <a class="btn" id="upgraded-admin-link" href="/admin/">Open admin dashboard →</a>
+    </div>
+  </section>
   <section class="panel" id="error-panel" style="display:none">
     <p class="err" id="error-text">Could not load credentials.</p>
     <p class="muted">If you just completed payment, your business was provisioned — check your email or contact support to recover your login.</p>
@@ -66,6 +73,15 @@ function copyCred(id, btn) {
       return r.json();
     })
     .then(function (c) {
+      if (c.upgraded) {
+        document.getElementById('upgraded-admin-link').href = c.admin_url || '/admin/';
+        document.getElementById('upgraded-text').textContent =
+          'Your free trial for "' + (c.business_name || 'your business') + '" is now the ' + (c.plan || '') + ' plan. ' +
+          'Your chatbot, FAQs, and settings are unchanged — just keep using your existing admin login.';
+        document.getElementById('subtitle').textContent = 'Payment complete — your trial has been upgraded.';
+        document.getElementById('upgraded-panel').style.display = 'block';
+        return;
+      }
       document.getElementById('c-business').textContent = c.business_name || '—';
       document.getElementById('c-user').textContent = c.admin_username || '—';
       document.getElementById('c-pass').textContent = c.admin_password || '—';

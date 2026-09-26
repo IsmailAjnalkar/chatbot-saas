@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="manifest" href="/admin/manifest.json">
+<meta name="theme-color" content="#4f46e5">
+<link rel="apple-touch-icon" href="/admin/icon.svg">
 <title>Chatbot Admin</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -51,6 +54,18 @@
   .check { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 14px; }
   .check input { width: auto; margin: 0; }
   @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+  /* ---------- mobile: agents can run the inbox from a phone ---------- */
+  @media (max-width: 720px) {
+    body { font-size: 15px; }
+    header.app { flex-wrap: wrap; gap: 8px; padding: 12px 14px; }
+    nav.tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; display: flex; }
+    nav.tabs button { flex: 0 0 auto; padding: 10px 14px; font-size: 14px; }
+    .tab { padding: 14px; }
+    table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .modal .box { width: 100%; border-radius: 0; max-height: 100vh; height: 100%; }
+    input, select, textarea, button { font-size: 16px; } /* no iOS zoom-on-focus */
+    #login { margin: 24px 14px; padding: 28px 20px; }
+  }
 </style>
 </head>
 <body>
@@ -69,6 +84,7 @@
     <div class="brand">🤖 <span id="biz-name">Chatbot</span> Admin</div>
     <div class="who"><span id="who"></span> &nbsp;<button class="small ghost" onclick="doLogout()">Sign out</button></div>
   </header>
+  <div id="trial-banner" style="display:none"></div>
   <nav class="tabs">
     <button class="active" data-tab="overview" onclick="showTab('overview')">Overview</button>
     <button data-tab="faqs" onclick="showTab('faqs')">Knowledge Base</button>
@@ -114,8 +130,28 @@ function showApp(me) {
   document.getElementById('app').style.display = 'block';
   document.getElementById('who').textContent = me.username + ' · ' + me.business.name;
   document.getElementById('biz-name').textContent = me.business.name;
+  window.__bizId = me.business && me.business.id ? me.business.id : '';
+  loadAccountBanner();
   loadOverview();
 }
+
+/* ---------- Trial / plan banner ---------- */
+function loadAccountBanner() {
+  req('GET', '/api/admin/account').then(function (r) {
+    var a = r.json, bar = document.getElementById('trial-banner');
+    if (!a.trial) { bar.style.display = 'none'; return; }
+    var days = a.trial_days_left;
+    var plan = a.plan === 'trial' ? (a.trial_plan || 'starter') : a.plan;
+    var upUrl = a.billing_configured
+      ? '/api/billing/checkout?plan=' + encodeURIComponent(plan) + '&business_name=' + encodeURIComponent(a.business_name) + '&admin_username=trial-upgrade&business_id=' + encodeURIComponent(me_business_id())
+      : '/pricing/';
+    bar.style.display = 'block';
+    bar.innerHTML = '<div style="background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;padding:12px 20px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">'
+      + '<span>⏳ <strong>Free trial:</strong> ' + days + ' day' + (days === 1 ? '' : 's') + ' left. Upgrade to keep your chatbot running.</span>'
+      + '<a href="' + upUrl + '" style="background:#fff;color:#4f46e5;font-weight:700;padding:8px 18px;border-radius:8px;text-decoration:none">Upgrade now →</a></div>';
+  }).catch(function () {});
+}
+function me_business_id() { return window.__bizId || ''; }
 
 function doLogin() {
   var u = document.getElementById('username').value.trim();
